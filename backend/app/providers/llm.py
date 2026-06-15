@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import AsyncIterator
+import json
 
 
 @dataclass
@@ -62,7 +63,7 @@ class DeepSeekProvider(LLMProvider):
             data = resp.json()
             return data["choices"][0]["message"]["content"]
 
-    async def _stream_chat(self, client, body):
+    def _stream_chat(self, client, body) -> AsyncIterator[str]:
         async def generate():
             async with client.stream("POST", "/v1/chat/completions", json=body) as resp:
                 resp.raise_for_status()
@@ -71,8 +72,6 @@ class DeepSeekProvider(LLMProvider):
                         data_str = line[6:]
                         if data_str.strip() == "[DONE]":
                             break
-                        import json
-
                         data = json.loads(data_str)
                         delta = data["choices"][0].get("delta", {})
                         if "content" in delta:
