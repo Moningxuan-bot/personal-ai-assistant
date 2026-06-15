@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.env
+.venv/
+venv/
+
+# Flutter
+.dart_tool/
+build/
+*.iml
+.gradle/
+android/.gradle/
+ios/Pods/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# System
+.DS_Store
+Thumbs.db
+
+# Superpowers
+.superpowers/
+
+# Docker
+pgdata/
