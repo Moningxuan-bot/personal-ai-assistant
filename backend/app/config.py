@@ -11,13 +11,12 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
 
     # Auth
-    device_secret: str = "change-me"
+    device_secret: str = "CHANGE_ME"
 
     # Memory
     memory_retrieval_count: int = 5
 
-    class Config:
-        env_file = ".env"
+    model_config = {"env_file": ".env"}
 
 
 settings = Settings()
