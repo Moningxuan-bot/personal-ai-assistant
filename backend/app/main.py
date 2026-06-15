@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware.auth import AuthMiddleware
+from app.routes import chat, health
 
 
 @asynccontextmanager
@@ -28,6 +30,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Personal AI Assistant", version="0.1.0", lifespan=lifespan)
 
+app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,4 +38,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routes will be registered in later tasks
+app.include_router(health.router)
+app.include_router(chat.router, prefix="/api")
