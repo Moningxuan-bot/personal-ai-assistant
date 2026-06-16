@@ -1,7 +1,8 @@
 import uuid
+from decimal import Decimal
 from datetime import datetime
 from sqlalchemy import String, Text, DateTime, ForeignKey, Numeric, Boolean, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.database import Base
 
@@ -16,12 +17,14 @@ class Spending(Base):
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
     )
-    amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     category: Mapped[str] = mapped_column(String(20), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reaction: Mapped[str] = mapped_column(Text, nullable=False)
     chat_reaction: Mapped[str | None] = mapped_column(Text, nullable=True)
-    chat_delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    chat_delivered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    conversation = relationship("Conversation", back_populates="spendings")

@@ -4,6 +4,7 @@ from sqlalchemy import String, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.models.database import Base
+from app.models.spending import Spending
 
 
 class Conversation(Base):
@@ -31,3 +32,4 @@ class Conversation(Base):
 
     messages = relationship("Message", back_populates="conversation", order_by="Message.created_at")
     goals = relationship("Goal", back_populates="conversation")
+    spendings = relationship("Spending", back_populates="conversation", order_by="Spending.created_at")
