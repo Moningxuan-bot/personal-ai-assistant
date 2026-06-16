@@ -361,7 +361,85 @@ git commit -m "feat: add Spending API routes (POST/GET/GET stats)"
 
 ---
 
-### Task 5: Backend Tests
+### Task 5: Inject Spending Context into Chat
+
+**Files:**
+- Modify: `backend/app/services/spending.py`
+- Modify: `backend/app/services/chat.py`
+
+- [ ] **Step 1: Add recent spendings query to SpendingService**
+
+Add method to `SpendingService`:
+```python
+    async def get_recent_context(self, hours: int = 24, limit: int = 10) -> str:
+        """返回近期消费的文本摘要，供聊天上下文注入。"""
+        cutoff = datetime.now() - timedelta(hours=hours)
+        stmt = (select(Spending)
+                .where(Spending.created_at >= cutoff)
+                .order_by(Spending.created_at.desc())
+                .limit(limit))
+        result = await self.db.execute(stmt)
+        spendings = result.scalars().all()
+
+        if not spendings:
+            return ""
+
+        lines = ["用户最近的消费记录："]
+        for s in spendings:
+            lines.append(
+                f"  • {s.created_at.strftime('%H:%M')} [{s.category}] ¥{float(s.amount):.0f}"
+                f"{' — ' + s.note if s.note else ''}"
+                f"（{s.reaction}）"
+            )
+
+        # 加月度统计摘要
+        stats = await self.get_stats()
+        lines.append(f"\n本月累计 ¥{stats['total']:.0f}。阿玖点评：{stats['ajiu_comment']}")
+
+        return "\n".join(lines)
+```
+
+- [ ] **Step 2: Wire into chat flow**
+
+In `ChatService.chat()`, after retrieving memory context and before building the system prompt, fetch spending context:
+
+```python
+# In ChatService.chat(), in casual mode section (~line 119-121), add:
+        # 4.5 Fetch recent spending context
+        from app.services.spending import SpendingService
+        spending_service = SpendingService(self.db, self.llm)
+        spending_context = await spending_service.get_recent_context(hours=24, limit=5)
+
+        # ... later, build the final system prompt with spending context
+```
+
+Then in `_build_system_prompt`, add spending context if available:
+```python
+    def _build_system_prompt(
+        self, mode: str, memory_context: str = "", spending_context: str = ""
+    ) -> str:
+        parts = [AJIU_SYSTEM_PROMPT]
+        if mode in MODE_PROMPTS:
+            parts.append(MODE_PROMPTS[mode])
+        parts.append(f"## 当前时间\n{self._time_context()}")
+        if memory_context:
+            parts.append(f"## 关于用户的记忆\n{memory_context}")
+        if spending_context:
+            parts.append(f"## 用户近期消费\n{spending_context}\n\n你可以根据这些消费记录自然地和用户聊天。"
+                         f"比如他说「昨天花了多少」你就去翻记录。看到烟酒消费可以念叨两句。")
+        return "\n\n".join(parts)
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backend/app/services/spending.py backend/app/services/chat.py
+git commit -m "feat: inject spending context into casual chat for memory recall"
+```
+
+---
+
+### Task 6: Backend Tests
 
 **Files:**
 - Create: `backend/tests/test_spending.py`
@@ -455,23 +533,38 @@ async def test_llm_failure_fallback(db_session):
     assert len(r["reaction"]) > 0
 ```
 
+@pytest.mark.anyio
+async def test_recent_context(db_session):
+    """get_recent_context 应返回近期消费摘要文本。"""
+    from datetime import datetime, timedelta
+    db_session.add(Spending(amount=35, category="餐饮", note="麻辣烫", reaction="又吃！", created_at=datetime.now()))
+    db_session.add(Spending(amount=25, category="烟酒", note="烟", reaction="唉。", created_at=datetime.now() - timedelta(hours=2)))
+    await db_session.commit()
+    mock_llm = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = "还行。"
+    text = await SpendingService(db_session, mock_llm).get_recent_context(hours=48)
+    assert "麻辣烫" in text
+    assert "烟酒" in text
+    assert "本月累计" in text
+```
+
 - [ ] **Step 2: Run tests**
 
 ```bash
 cd backend && .venv/Scripts/python -m pytest tests/ -v
 ```
-Expected: 34 tests pass (27 previous + 7 new)
+Expected: 35 tests pass (27 previous + 8 spending)
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add backend/tests/test_spending.py
-git commit -m "test: add SpendingService tests (7 cases)"
+git commit -m "test: add SpendingService tests (8 cases)"
 ```
 
 ---
 
-### Task 6: Flutter — Model + API Client + Provider
+### Task 7: Flutter — Model + API Client + Provider
 
 **Files:**
 - Create: `app/lib/models/spending.dart`
@@ -599,7 +692,7 @@ git commit -m "feat: add Flutter spending model + API + provider"
 
 ---
 
-### Task 7: Flutter — Spending Card + Entry Sheet
+### Task 8: Flutter — Spending Card + Entry Sheet
 
 **Files:**
 - Create: `app/lib/widgets/spending_card.dart`
@@ -727,7 +820,7 @@ git commit -m "feat: add SpendingCard and SpendingEntrySheet widgets"
 
 ---
 
-### Task 8: Flutter — Chat Screen FAB + Settings Link
+### Task 9: Flutter — Chat Screen FAB + Settings Link
 
 **Files:**
 - Modify: `app/lib/screens/chat_screen.dart`
@@ -848,7 +941,7 @@ git commit -m "feat: add FAB + spending card + stats screen + settings link"
 
 ---
 
-### Task 9: Final Verification
+### Task 10: Final Verification
 
 - [ ] **Step 1: Run full test suite**
 
