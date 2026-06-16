@@ -3,8 +3,9 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.memory import Memory
 from app.models.goal import Goal, GoalCheck
+from app.models.spending import Spending
 
 __all__ = [
     "Base", "engine", "async_session", "get_db",
-    "Conversation", "Message", "Memory", "Goal", "GoalCheck",
+    "Conversation", "Message", "Memory", "Goal", "GoalCheck", "Spending",
 ]
