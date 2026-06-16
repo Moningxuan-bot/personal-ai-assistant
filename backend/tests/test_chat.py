@@ -6,6 +6,15 @@ from app.models.message import Message
 from app.providers.llm import LLMProvider
 
 
+def _collect_deltas(events):
+    """Helper: extract delta content from stream events, return joined text."""
+    parts = []
+    for event in events:
+        if event["type"] == "delta":
+            parts.append(event["content"])
+    return "".join(parts)
+
+
 @pytest.mark.anyio
 async def test_get_or_create_conversation_new(db_session):
     """Should create a new conversation when no ID provided."""
@@ -41,8 +50,26 @@ async def test_get_or_create_conversation_existing(db_session):
 
 
 @pytest.mark.anyio
-async def test_chat_creates_user_and_assistant_messages(db_session):
-    """Should save both user and assistant messages."""
+async def test_get_or_create_conversation_unknown_raises(db_session):
+    """Should raise 404 when conversation_id is unknown."""
+    import uuid
+    from fastapi import HTTPException
+
+    mock_llm = AsyncMock(spec=LLMProvider)
+    mock_embed = AsyncMock()
+
+    memory = MemoryService(db_session, mock_embed)
+    service = ChatService(db_session, mock_llm, memory)
+
+    fake_id = uuid.uuid4()
+    with pytest.raises(HTTPException) as exc_info:
+        await service._get_or_create_conversation(fake_id)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_chat_emits_meta_delta_done_events(db_session):
+    """Should emit meta → delta... → done events in order."""
     mock_llm = AsyncMock(spec=LLMProvider)
 
     async def mock_stream(*args, **kwargs):
@@ -56,11 +83,21 @@ async def test_chat_creates_user_and_assistant_messages(db_session):
     memory = MemoryService(db_session, mock_embed)
     service = ChatService(db_session, mock_llm, memory)
 
-    chunks = []
-    async for chunk in service.chat("测试消息", None):
-        chunks.append(chunk)
+    events = []
+    async for event in service.chat("测试消息", None):
+        events.append(event)
 
-    assert "你好！" in "".join(chunks)
+    # Should start with meta
+    assert events[0]["type"] == "meta"
+    assert events[0]["conversation_id"] is not None
+
+    # Should end with done
+    assert events[-1]["type"] == "done"
+
+    # Should have delta events between
+    deltas = [e for e in events if e["type"] == "delta"]
+    assert len(deltas) >= 1
+    assert "你好！" in "".join(d["content"] for d in deltas)
 
     # Verify messages saved
     from sqlalchemy import select
@@ -84,7 +121,6 @@ async def test_chat_with_memory_context(db_session):
     mock_llm.embed.return_value = [0.0] * 512
 
     async def mock_stream(*args, **kwargs):
-        # Capture the system messages to verify memory injection
         yield "收到！"
 
     mock_llm.chat.return_value = mock_stream()
@@ -105,8 +141,11 @@ async def test_chat_with_memory_context(db_session):
 
     service = ChatService(db_session, mock_llm, memory)
 
-    chunks = []
-    async for chunk in service.chat("Python相关", None):
-        chunks.append(chunk)
+    events = []
+    async for event in service.chat("Python相关", None):
+        events.append(event)
 
-    assert "收到！" in "".join(chunks)
+    response_text = _collect_deltas(events)
+    assert "收到！" in response_text
+    assert events[0]["type"] == "meta"
+    assert events[-1]["type"] == "done"

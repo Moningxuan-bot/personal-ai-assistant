@@ -7,18 +7,26 @@ from app.routes import chat, health
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: verify DB connection (models created in a later task)
+    # Startup: verify DB connection
     try:
         from app.models.database import engine
         from sqlalchemy import text
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
     except ImportError:
-        # Models not yet implemented — skip DB check
         pass
     except Exception:
-        # DB not available — continue, app is still functional for development
         pass
+
+    # Preload embedding model so first request doesn't block on download
+    try:
+        from app.providers.embedding import embed_provider
+        import asyncio
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, embed_provider._load_model)
+    except Exception:
+        pass  # App still works for basic chat without embeddings
+
     yield
     # Shutdown
     try:

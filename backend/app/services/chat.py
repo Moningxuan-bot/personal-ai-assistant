@@ -1,3 +1,4 @@
+import json
 import uuid
 from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,20 +26,23 @@ class ChatService:
 
     async def chat(
         self, user_message: str, conversation_id: uuid.UUID | None = None
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[dict]:
         # 1. Get or create conversation
         conv = await self._get_or_create_conversation(conversation_id)
 
-        # 2. Retrieve relevant memories
+        # 2. Emit meta frame FIRST — so frontend knows the conversation_id
+        yield {"type": "meta", "conversation_id": str(conv.id)}
+
+        # 3. Retrieve relevant memories
         memories = await self.memory.retrieve_relevant(user_message)
         memory_context = "\n".join(
             f"[记忆: {m.category}] {m.content}" for m in memories
         )
 
-        # 3. Get recent messages from this conversation
+        # 4. Get recent messages from this conversation
         recent = await self._get_recent_messages(conv.id, limit=20)
 
-        # 4. Build messages array
+        # 5. Build messages array
         llm_messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)]
 
         if memory_context:
@@ -51,22 +55,22 @@ class ChatService:
 
         llm_messages.append(ChatMessage(role="user", content=user_message))
 
-        # 5. Save user message
+        # 6. Save user message
         user_msg = Message(
             conversation_id=conv.id, role="user", content=user_message
         )
         self.db.add(user_msg)
         await self.db.commit()
 
-        # 6. Stream response
+        # 7. Stream response tokens
         full_response = []
         stream = await self.llm.chat(llm_messages, stream=True)
 
         async for chunk in stream:
             full_response.append(chunk)
-            yield chunk
+            yield {"type": "delta", "content": chunk}
 
-        # 7. Save assistant message
+        # 8. Save assistant message
         response_text = "".join(full_response)
         assistant_msg = Message(
             conversation_id=conv.id, role="assistant", content=response_text
@@ -74,7 +78,10 @@ class ChatService:
         self.db.add(assistant_msg)
         await self.db.commit()
 
-        # 8. Index messages and extract memories (fire-and-forget, don't block)
+        # 9. Signal done BEFORE background work — client unblocks immediately
+        yield {"type": "done"}
+
+        # 10. Index messages and extract memories (runs after client receives done)
         try:
             await self.memory.index_message(user_msg)
             await self.memory.index_message(assistant_msg)
@@ -95,7 +102,14 @@ class ChatService:
             conv = result.scalar_one_or_none()
             if conv:
                 return conv
+            # Unknown conversation_id → 404, don't silently create
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=404,
+                detail=f"Conversation {conversation_id} not found",
+            )
 
+        # Only create new conversation when no ID provided
         conv = Conversation()
         self.db.add(conv)
         await self.db.commit()

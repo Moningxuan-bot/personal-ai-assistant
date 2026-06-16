@@ -42,3 +42,8 @@ class SentenceTransformerProvider(EmbeddingProvider):
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(None, model.encode, texts)
         return [r.tolist() for r in results]
+
+
+# Singleton instance — used by lifespan (preload) and routes
+# Uses a lightweight Chinese-optimized model
+embed_provider = SentenceTransformerProvider(model_name="BAAI/bge-small-zh-v1.5")

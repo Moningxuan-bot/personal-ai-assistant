@@ -1,3 +1,4 @@
+import json
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -10,7 +11,7 @@ from app.schemas.chat import ChatRequest, MessageResponse
 from app.services.chat import ChatService
 from app.services.memory import MemoryService
 from app.providers.llm import DeepSeekProvider
-from app.providers.embedding import SentenceTransformerProvider
+from app.providers.embedding import embed_provider
 from app.config import settings
 
 router = APIRouter(tags=["chat"])
@@ -20,7 +21,6 @@ llm_provider = DeepSeekProvider(
     api_key=settings.deepseek_api_key,
     base_url=settings.deepseek_base_url,
 )
-embed_provider = SentenceTransformerProvider()
 
 
 def get_chat_service(db: AsyncSession = Depends(get_db)) -> ChatService:
@@ -32,13 +32,14 @@ def get_chat_service(db: AsyncSession = Depends(get_db)) -> ChatService:
 async def chat(request: ChatRequest, service: ChatService = Depends(get_chat_service)):
     async def event_stream():
         try:
-            async for chunk in service.chat(
+            async for event in service.chat(
                 request.message, request.conversation_id
             ):
-                yield f"data: {chunk}\n\n"
-            yield "data: [DONE]\n\n"
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except HTTPException:
+            raise
         except Exception as e:
-            yield f"data: [ERROR] {str(e)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_stream(),

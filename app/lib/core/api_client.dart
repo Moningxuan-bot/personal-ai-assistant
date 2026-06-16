@@ -1,5 +1,30 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+class ChatStreamEvent {
+  final String type; // "meta", "delta", "done", "error"
+  final String? conversationId;
+  final String? content;
+  final String? message; // error message
+
+  const ChatStreamEvent({
+    required this.type,
+    this.conversationId,
+    this.content,
+    this.message,
+  });
+
+  factory ChatStreamEvent.fromJson(Map<String, dynamic> json) {
+    return ChatStreamEvent(
+      type: json['type'] as String? ?? 'unknown',
+      conversationId: json['conversation_id'] as String?,
+      content: json['content'] as String?,
+      message: json['message'] as String?,
+    );
+  }
+}
 
 class ApiClient {
   late final Dio _dio;
@@ -27,7 +52,9 @@ class ApiClient {
   Future<void> setDeviceToken(String token) async =>
       await _storage.write(key: 'device_token', token);
 
-  Stream<String> chatStream(String message, String? conversationId) async* {
+  /// Returns a stream of structured chat events (meta / delta / done / error).
+  /// Uses proper UTF-8 streaming decoder to avoid splitting multi-byte chars.
+  Stream<ChatStreamEvent> chatStream(String message, String? conversationId) async* {
     final response = await _dio.post(
       '/api/chat',
       data: {
@@ -38,11 +65,31 @@ class ApiClient {
       options: Options(responseType: ResponseType.stream),
     );
 
-    await for (final chunk in response.data.stream) {
-      final text = String.fromCharCodes(chunk);
-      for (final line in text.split('\n')) {
-        if (line.startsWith('data: ') && !line.contains('[DONE]')) {
-          yield line.substring(6);
+    final lineBuffer = StringBuffer();
+    await for (final text in response.data.stream.cast<List<int>>().transform(utf8.decoder)) {
+      lineBuffer.write(text);
+
+      // Process complete lines only (SSE lines end with \n\n)
+      while (true) {
+        final bufferStr = lineBuffer.toString();
+        final doubleNewline = bufferStr.indexOf('\n\n');
+        if (doubleNewline == -1) break;
+
+        final line = bufferStr.substring(0, doubleNewline).trim();
+        lineBuffer.clear();
+        // Write back anything after the \n\n
+        if (doubleNewline + 2 < bufferStr.length) {
+          lineBuffer.write(bufferStr.substring(doubleNewline + 2));
+        }
+
+        if (line.startsWith('data: ')) {
+          final jsonStr = line.substring(6);
+          try {
+            final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+            yield ChatStreamEvent.fromJson(json);
+          } catch (_) {
+            // Skip malformed JSON lines
+          }
         }
       }
     }
