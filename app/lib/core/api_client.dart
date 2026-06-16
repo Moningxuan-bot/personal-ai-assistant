@@ -9,12 +9,18 @@ class ChatStreamEvent {
   final String? conversationId;
   final String? content;
   final String? message; // error message
+  final String? mode;
+  final Map<String, dynamic>? coachState;
+  final String? coachAction;
 
   const ChatStreamEvent({
     required this.type,
     this.conversationId,
     this.content,
     this.message,
+    this.mode,
+    this.coachState,
+    this.coachAction,
   });
 
   factory ChatStreamEvent.fromJson(Map<String, dynamic> json) {
@@ -23,6 +29,11 @@ class ChatStreamEvent {
       conversationId: json['conversation_id'] as String?,
       content: json['content'] as String?,
       message: json['message'] as String?,
+      mode: json['mode'] as String?,
+      coachState: json['coach_state'] is Map
+          ? Map<String, dynamic>.from(json['coach_state'] as Map)
+          : null,
+      coachAction: json['coach_action'] as String?,
     );
   }
 }
@@ -51,7 +62,7 @@ class ApiClient {
       await _storage.read(key: 'device_token') ?? '';
 
   Future<void> setDeviceToken(String token) async =>
-      await _storage.write(key: 'device_token', token);
+      await _storage.write(key: 'device_token', value: token);
 
   /// Returns a stream of structured chat events (meta / delta / done / error).
   /// Uses proper UTF-8 streaming decoder to avoid splitting multi-byte chars.
@@ -126,5 +137,65 @@ class ApiClient {
   Future<Map<String, dynamic>> getSpendingStats() async {
     final resp = await _dio.get('/api/spendings/stats');
     return resp.data;
+  }
+
+  Future<List<Map<String, dynamic>>> getGoals() async {
+    final resp = await _dio.get('/api/goals');
+    return List<Map<String, dynamic>>.from(resp.data as List);
+  }
+
+  Future<List<Map<String, dynamic>>> getActiveGoals() async {
+    final resp = await _dio.get('/api/goals/active');
+    return List<Map<String, dynamic>>.from(resp.data as List);
+  }
+
+  Future<Map<String, dynamic>> getGoal(String id) async {
+    final resp = await _dio.get('/api/goals/$id');
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
+  Future<Map<String, dynamic>> updateGoalStatus(
+    String id,
+    String status,
+  ) async {
+    final resp = await _dio.patch('/api/goals/$id', data: {'status': status});
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
+  Future<Map<String, dynamic>> reviveGoal(String id) async {
+    final resp = await _dio.post('/api/goals/$id/revive');
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
+  Future<Map<String, dynamic>> addGoalCheck(
+    String goalId, {
+    String status = 'done',
+    String? note,
+  }) async {
+    final resp = await _dio.post('/api/goals/$goalId/checks', data: {
+      'status': status,
+      if (note != null) 'note': note,
+    });
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> getTodayMemes() async {
+    final resp = await _dio.get('/api/memes/today');
+    return List<Map<String, dynamic>>.from(resp.data as List);
+  }
+
+  Future<List<Map<String, dynamic>>> fetchMemes() async {
+    final resp = await _dio.post('/api/memes/fetch');
+    return List<Map<String, dynamic>>.from(resp.data as List);
+  }
+
+  Future<Map<String, dynamic>> keepMeme(String id) async {
+    final resp = await _dio.post('/api/memes/$id/keep');
+    return Map<String, dynamic>.from(resp.data as Map);
+  }
+
+  Future<Map<String, dynamic>> discardMeme(String id) async {
+    final resp = await _dio.post('/api/memes/$id/discard');
+    return Map<String, dynamic>.from(resp.data as Map);
   }
 }

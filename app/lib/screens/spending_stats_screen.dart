@@ -47,7 +47,6 @@ class _SpendingStatsScreenState extends ConsumerState<SpendingStatsScreen> {
           ]),
     );
   }
-  );
 
   Widget _infoCard(String title, String content) => Container(
     width: double.infinity, padding: const EdgeInsets.all(14),

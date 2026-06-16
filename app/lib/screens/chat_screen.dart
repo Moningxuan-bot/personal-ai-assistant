@@ -3,9 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme.dart';
 import '../providers/chat_provider.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/coach_panel.dart';
 import '../widgets/message_input.dart';
+import '../widgets/mode_indicator.dart';
 import 'settings_screen.dart';
-import '../widgets/spending_entry_sheet.dart';
 
 class ChatScreen extends ConsumerWidget {
   const ChatScreen({super.key});
@@ -13,6 +14,9 @@ class ChatScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final messages = ref.watch(chatProvider);
+    final chatNotifier = ref.watch(chatProvider.notifier);
+    final currentMode = chatNotifier.currentMode;
+    final coachState = chatNotifier.coachState;
 
     return Scaffold(
       body: SafeArea(
@@ -82,6 +86,8 @@ class ChatScreen extends ConsumerWidget {
                     ],
                   ),
                   const Spacer(),
+                  ModeIndicator(mode: currentMode),
+                  const SizedBox(width: 4),
                   // Settings
                   IconButton(
                     icon: const Icon(Icons.settings, size: 20),
@@ -129,6 +135,8 @@ class ChatScreen extends ConsumerWidget {
                     ),
             ),
 
+            CoachPanel(coachState: coachState),
+
             // Input
             MessageInput(
               onSubmit: (text) {
@@ -137,19 +145,6 @@ class ChatScreen extends ConsumerWidget {
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          final convId = ref.read(chatProvider.notifier).conversationId;
-          showModalBottomSheet(
-            context: context, isScrollControlled: true,
-            shape: const RoundedRectangleBorder(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-            builder: (_) => SpendingEntrySheet(conversationId: convId),
-          );
-        },
-        backgroundColor: AppTheme.primaryGradientStart,
-        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }

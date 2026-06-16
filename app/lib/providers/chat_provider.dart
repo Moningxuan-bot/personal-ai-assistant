@@ -26,9 +26,15 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   final ApiClient? _api;
   final _uuid = const Uuid();
   String? _conversationId;
+  String _currentMode = 'casual';
+  Map<String, dynamic>? _coachState;
+  String? _coachAction;
 
   /// Public getter so other providers can read the current conversation ID.
   String? get conversationId => _conversationId;
+  String get currentMode => _currentMode;
+  Map<String, dynamic>? get coachState => _coachState;
+  String? get coachAction => _coachAction;
 
   /// Normal constructor with a real API client.
   ChatNotifier(ApiClient api)
@@ -83,6 +89,13 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
             if (event.conversationId != null) {
               _conversationId = event.conversationId;
             }
+            if (event.mode != null) {
+              _currentMode = event.mode!;
+            }
+            if (event.coachState != null) {
+              _coachState = event.coachState;
+            }
+            state = [...state];
             break;
           case 'delta':
             if (event.content != null) {
@@ -96,6 +109,12 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
             }
             break;
           case 'done':
+            if (event.coachState != null) {
+              _coachState = event.coachState;
+            }
+            if (event.coachAction != null) {
+              _coachAction = event.coachAction;
+            }
             state = state.map((m) {
               if (m.id == assistantId) {
                 return m.copyWith(isStreaming: false);
@@ -131,5 +150,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   void clearChat() {
     state = [];
     _conversationId = null;
+    _currentMode = 'casual';
+    _coachState = null;
+    _coachAction = null;
   }
 }
