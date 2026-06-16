@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import datetime
 from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,10 +8,15 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.services.memory import MemoryService
 from app.providers.llm import LLMProvider, ChatMessage
+from app.prompts.ajiu import AJIU_SYSTEM_PROMPT, MODE_PROMPTS
 
-
-SYSTEM_PROMPT = """你是一个专属 AI 助手。你的风格是直接、真诚、口语化，像和老朋友聊天。
-你不会回避任何话题，保持理性分析。使用中文回复。"""
+# 教练模式触发词
+COACH_TRIGGERS = [
+    "我想", "我打算", "我要不要", "能不能帮我规划",
+    "帮我制定", "怎么学", "怎么开始", "帮我安排",
+    "想学", "想减肥", "想锻炼", "想养成",
+    "定个目标", "制定计划", "给我建议", "阿玖说正事",
+]
 
 
 class ChatService:
@@ -24,6 +30,52 @@ class ChatService:
         self.llm = llm
         self.memory = memory
 
+    def _detect_mode(self, user_message: str) -> str:
+        """检测当前交互模式：casual / coach / butler"""
+        if "阿玖说正事" in user_message:
+            return "coach"
+        if any(kw in user_message for kw in COACH_TRIGGERS):
+            return "coach"
+        # TODO: 当有进行中的任务时，自动进入 butler 模式
+        return "casual"
+
+    def _time_context(self) -> str:
+        """根据当前时间生成时间上下文"""
+        hour = datetime.now().hour
+        if 5 <= hour < 9:
+            return "现在是清晨。如果用户刚醒，可以打个招呼，问问他今天的计划。语气轻快一点。"
+        elif 9 <= hour < 12:
+            return "现在是上午。用户可能在摸鱼，你可以随口问他在干嘛。"
+        elif 12 <= hour < 14:
+            return "现在是中午。可以关心一下用户有没有好好吃饭。"
+        elif 14 <= hour < 18:
+            return "现在是下午。如果用户有任务没完成，可以念叨两句。"
+        elif 18 <= hour < 22:
+            return "现在是晚上。用户可能刚下班或放学，语气可以轻松一点。"
+        elif 22 <= hour < 24:
+            return "现在是深夜。你按惯例去搜 B 站梗了。用户如果还在线，催他早点睡。"
+        else:
+            return "现在是凌晨。这么晚不睡？念叨他两句，但别太凶——他可能在熬夜赶工。"
+
+    def _build_system_prompt(
+        self, mode: str, memory_context: str = ""
+    ) -> str:
+        """组装完整 System Prompt：基础人格 + 模式 + 时间 + 记忆"""
+        parts = [AJIU_SYSTEM_PROMPT]
+
+        # 模式行为准则
+        if mode in MODE_PROMPTS:
+            parts.append(MODE_PROMPTS[mode])
+
+        # 时间上下文
+        parts.append(f"## 当前时间\n{self._time_context()}")
+
+        # 相关记忆
+        if memory_context:
+            parts.append(f"## 关于用户的记忆\n{memory_context}")
+
+        return "\n\n".join(parts)
+
     async def chat(
         self, user_message: str, conversation_id: uuid.UUID | None = None
     ) -> AsyncIterator[dict]:
@@ -31,24 +83,21 @@ class ChatService:
         conv = await self._get_or_create_conversation(conversation_id)
 
         # 2. Emit meta frame FIRST — so frontend knows the conversation_id
-        yield {"type": "meta", "conversation_id": str(conv.id)}
+        mode = self._detect_mode(user_message)
+        yield {"type": "meta", "conversation_id": str(conv.id), "mode": mode}
 
         # 3. Retrieve relevant memories
         memories = await self.memory.retrieve_relevant(user_message)
         memory_context = "\n".join(
-            f"[记忆: {m.category}] {m.content}" for m in memories
+            f"[{m.category}] {m.content}" for m in memories
         )
 
         # 4. Get recent messages from this conversation
         recent = await self._get_recent_messages(conv.id, limit=20)
 
-        # 5. Build messages array
-        llm_messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)]
-
-        if memory_context:
-            llm_messages.append(
-                ChatMessage(role="system", content=f"相关记忆:\n{memory_context}")
-            )
+        # 5. Build messages array — personality as system prompt
+        system_prompt = self._build_system_prompt(mode, memory_context)
+        llm_messages = [ChatMessage(role="system", content=system_prompt)]
 
         for msg in recent:
             llm_messages.append(ChatMessage(role=msg.role, content=msg.content))
