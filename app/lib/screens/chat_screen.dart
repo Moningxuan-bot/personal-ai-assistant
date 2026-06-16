@@ -5,6 +5,7 @@ import '../providers/chat_provider.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
 import 'settings_screen.dart';
+import '../widgets/spending_entry_sheet.dart';
 
 class ChatScreen extends ConsumerWidget {
   const ChatScreen({super.key});
@@ -136,6 +137,16 @@ class ChatScreen extends ConsumerWidget {
             ),
           ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => showModalBottomSheet(
+          context: context, isScrollControlled: true,
+          shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+          builder: (_) => const SpendingEntrySheet(),
+        ),
+        backgroundColor: AppTheme.primaryGradientStart,
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }

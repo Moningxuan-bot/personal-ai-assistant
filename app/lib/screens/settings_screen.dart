@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/theme.dart';
 import '../providers/chat_provider.dart';
+import 'spending_stats_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -54,6 +55,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            ListTile(
+              leading: const Icon(Icons.receipt_long),
+              title: const Text('消费记录'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SpendingStatsScreen()),
+              ),
+            ),
+            const Divider(),
             TextField(
               controller: _serverController,
               decoration: const InputDecoration(
