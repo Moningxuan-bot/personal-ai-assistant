@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'core/theme.dart';
-import 'screens/chat_screen.dart';
+import 'widgets/main_scaffold.dart';
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -11,7 +11,7 @@ class MyApp extends StatelessWidget {
       title: '阿玖',
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
-      home: const ChatScreen(),
+      home: const MainScaffold(),
     );
   }
 }
