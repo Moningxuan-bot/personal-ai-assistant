@@ -139,12 +139,15 @@ class ChatScreen extends ConsumerWidget {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => showModalBottomSheet(
-          context: context, isScrollControlled: true,
-          shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-          builder: (_) => const SpendingEntrySheet(),
-        ),
+        onPressed: () {
+          final convId = ref.read(chatProvider.notifier).conversationId;
+          showModalBottomSheet(
+            context: context, isScrollControlled: true,
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+            builder: (_) => SpendingEntrySheet(conversationId: convId),
+          );
+        },
         backgroundColor: AppTheme.primaryGradientStart,
         child: const Icon(Icons.add, color: Colors.white),
       ),

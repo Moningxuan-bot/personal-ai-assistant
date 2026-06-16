@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 SPENDING_CATEGORIES = Literal["餐饮", "交通", "烟酒", "购物", "娱乐", "其他"]
 
 
 class SpendingCreate(BaseModel):
-    amount: float
+    amount: float = Field(gt=0, le=99999999.99)
     category: SPENDING_CATEGORIES
     note: str | None = None
     conversation_id: uuid.UUID | None = None

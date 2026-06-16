@@ -59,3 +59,4 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(chat.router, prefix="/api")
 app.include_router(goals.router, prefix="/api")
+app.include_router(spendings.router, prefix="/api")

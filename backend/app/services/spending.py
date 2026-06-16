@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.spending import Spending
@@ -32,6 +32,7 @@ class SpendingService:
 
         if spending.chat_reaction and conversation_id:
             await self._deliver_chat_reaction(spending)
+            await self.db.refresh(spending)
 
         return self._to_dict(spending)
 
@@ -45,19 +46,23 @@ class SpendingService:
         result = await self.db.execute(stmt)
         return [self._to_dict(s) for s in result.scalars().all()]
 
-    async def get_stats(self) -> dict:
-        now = datetime.now()
+    async def get_stats(self, include_comment: bool = True) -> dict:
+        now = datetime.now(timezone.utc)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        stmt = select(Spending).where(Spending.created_at >= month_start)
-        result = await self.db.execute(stmt)
-        month_spendings = result.scalars().all()
 
-        total = float(sum(s.amount for s in month_spendings))
-        by_category: dict[str, float] = {}
-        for s in month_spendings:
-            by_category[s.category] = by_category.get(s.category, 0) + float(s.amount)
+        # SQL 聚合，不拉全月数据到 Python 内存
+        r = await self.db.execute(
+            select(func.coalesce(func.sum(Spending.amount), 0))
+            .where(Spending.created_at >= month_start))
+        total = float(r.scalar() or 0)
 
-        ajiu_comment = await self._monthly_comment(total, by_category)
+        r = await self.db.execute(
+            select(Spending.category, func.sum(Spending.amount))
+            .where(Spending.created_at >= month_start)
+            .group_by(Spending.category))
+        by_category: dict[str, float] = {row[0]: float(row[1]) for row in r.all()}
+
+        ajiu_comment = await self._monthly_comment(total, by_category) if include_comment else ""
         return {
             "month": now.strftime("%Y-%m"), "total": total,
             "by_category": by_category, "ajiu_comment": ajiu_comment,
@@ -66,7 +71,7 @@ class SpendingService:
     # ---- internal ----
 
     async def _gather_stats(self, category: str) -> dict:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         day_ago = now - timedelta(hours=24)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -107,9 +112,10 @@ needs_chat=true 条件：烟酒类 | 24h≥3次 | 金额>月均2倍 | 备注含�
             text = response.strip()
             if text.startswith("```"): text = text.split("\n", 1)[1].rstrip("```")
             result = json.loads(text)
-            return {"reaction": result.get("reaction", "记下了。"),
-                    "needs_chat": result.get("needs_chat", False),
-                    "chat_reaction": result.get("chat_reaction", "")}
+            needs_chat = result.get("needs_chat") is True
+            reaction = (result.get("reaction") or "").strip() or self._default_reaction(category, amount)
+            chat_reaction = (result.get("chat_reaction") or "").strip()
+            return {"reaction": reaction, "needs_chat": needs_chat, "chat_reaction": chat_reaction}
         except (json.JSONDecodeError, Exception):
             return {"reaction": self._default_reaction(category, amount),
                     "needs_chat": category == "烟酒", "chat_reaction": ""}
@@ -139,7 +145,7 @@ needs_chat=true 条件：烟酒类 | 24h≥3次 | 金额>月均2倍 | 备注含�
 
     async def get_recent_context(self, hours: int = 24, limit: int = 10) -> str:
         """返回近期消费的文本摘要，供聊天上下文注入。"""
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         stmt = (select(Spending)
                 .where(Spending.created_at >= cutoff)
                 .order_by(Spending.created_at.desc())
@@ -157,8 +163,8 @@ needs_chat=true 条件：烟酒类 | 24h≥3次 | 金额>月均2倍 | 备注含�
                 f"{' — ' + s.note if s.note else ''}"
                 f"（{s.reaction}）"
             )
-        stats = await self.get_stats()
-        lines.append(f"\n本月累计 ¥{stats['total']:.0f}。阿玖点评：{stats['ajiu_comment']}")
+        stats = await self.get_stats(include_comment=False)
+        lines.append(f"\n本月累计 ¥{stats['total']:.0f}")
         return "\n".join(lines)
 
     @staticmethod

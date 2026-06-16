@@ -27,5 +27,8 @@ Thumbs.db
 # Superpowers
 .superpowers/
 
+# Claude Code (local permissions, not product code)
+.claude/settings.local.json
+
 # Docker
 pgdata/

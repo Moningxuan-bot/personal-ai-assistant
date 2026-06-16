@@ -104,3 +104,113 @@ async def test_recent_context(db_session):
     assert "麻辣烫" in text
     assert "烟酒" in text
     assert "本月累计" in text
+
+
+@pytest.mark.anyio
+async def test_llm_string_false_needs_chat_ignored():
+    """LLM 返回 needs_chat: 'false'（字符串）不应触发聊天级反应。"""
+    mock_llm = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = json.dumps({"reaction":"行吧。","needs_chat":"false","chat_reaction":""})
+    svc = SpendingService(None, mock_llm)
+    r = await svc._judge_spending(10, "餐饮", "午餐", {
+        "same_category_count_24h":1,"same_category_count_month":3,"same_category_total":100,"monthly_total":500})
+    assert r["needs_chat"] is False  # 字符串 "false" 应转为 False
+    assert r["chat_reaction"] == ""
+
+
+@pytest.mark.anyio
+async def test_llm_empty_reaction_fallback():
+    """LLM 返回空 reaction 时应使用默认 reaction。"""
+    mock_llm = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = json.dumps({"reaction":"","needs_chat":False,"chat_reaction":""})
+    svc = SpendingService(None, mock_llm)
+    r = await svc._judge_spending(20, "餐饮", "午饭", {
+        "same_category_count_24h":1,"same_category_count_month":1,"same_category_total":20,"monthly_total":20})
+    assert len(r["reaction"]) > 0
+    assert r["reaction"] != ""
+
+
+@pytest.mark.anyio
+async def test_chat_reaction_with_conversation_id(db_session):
+    """有 conversation_id 的烟酒消费应创建 assistant Message 且 chat_delivered=True。"""
+    from app.models.conversation import Conversation
+    conv = Conversation()
+    db_session.add(conv)
+    await db_session.commit()
+
+    mock_llm = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = json.dumps(
+        {"reaction":"又抽烟？","needs_chat":True,"chat_reaction":"第N根了吧。你的肺不是我的，但我在意。"})
+    svc = SpendingService(db_session, mock_llm)
+    r = await svc.create_spending(30, "烟酒", "买烟", conv.id)
+
+    assert r["chat_reaction"] is not None
+    assert r["chat_delivered"] is True
+    # 确认 assistant message 已写入
+    from sqlalchemy import select
+    from app.models.message import Message
+    stmt = select(Message).where(Message.conversation_id == conv.id, Message.role == "assistant")
+    msgs = (await db_session.execute(stmt)).scalars().all()
+    assert len(msgs) == 1
+    assert "第N根" in msgs[0].content
+
+
+@pytest.mark.anyio
+async def test_get_recent_context_does_not_call_llm(db_session):
+    """get_recent_context 不应调用 LLM（不生成月度点评）。"""
+    now = datetime.now(timezone.utc)
+    db_session.add(Spending(amount=10, category="交通", note="", reaction="嗯。", created_at=now))
+    await db_session.commit()
+    mock_llm = AsyncMock(spec=LLMProvider)
+    # 不 mock chat — 如果调用了 LLM 就会报错
+    svc = SpendingService(db_session, mock_llm)
+    text = await svc.get_recent_context(hours=24)
+    assert "本月累计" in text
+    assert "阿玖点评" not in text  # 不应包含 LLM 点评
+    # LLM.chat 不应被调用
+    mock_llm.chat.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_stats_includes_comment_by_default(db_session):
+    """get_stats() 默认应包含阿玖点评。"""
+    now = datetime.now(timezone.utc)
+    db_session.add(Spending(amount=50, category="餐饮", note="", reaction="嗯", created_at=now))
+    await db_session.commit()
+    mock_llm = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = "吃得不赖。"
+    s = await SpendingService(db_session, mock_llm).get_stats()
+    assert len(s["ajiu_comment"]) > 0
+    mock_llm.chat.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_get_stats_skip_comment(db_session):
+    """get_stats(include_comment=False) 不应调用 LLM。"""
+    now = datetime.now(timezone.utc)
+    db_session.add(Spending(amount=50, category="餐饮", note="", reaction="嗯", created_at=now))
+    await db_session.commit()
+    mock_llm = AsyncMock(spec=LLMProvider)
+    s = await SpendingService(db_session, mock_llm).get_stats(include_comment=False)
+    assert s["ajiu_comment"] == ""
+    assert s["total"] == 50.0
+    mock_llm.chat.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_schema_rejects_negative_amount():
+    """SpendingCreate 应拒绝 amount <= 0（Pydantic Field 校验）。"""
+    from pydantic import ValidationError
+    from app.schemas.spending import SpendingCreate
+
+    # amount = 0 应拒绝
+    with pytest.raises(ValidationError):
+        SpendingCreate(amount=0, category="餐饮")
+
+    # amount = -100 应拒绝
+    with pytest.raises(ValidationError):
+        SpendingCreate(amount=-100, category="餐饮")
+
+    # amount = 50 应成功
+    s = SpendingCreate(amount=50, category="餐饮", note="测试")
+    assert s.amount == 50.0

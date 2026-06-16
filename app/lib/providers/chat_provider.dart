@@ -27,6 +27,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   final _uuid = const Uuid();
   String? _conversationId;
 
+  /// Public getter so other providers can read the current conversation ID.
+  String? get conversationId => _conversationId;
+
   /// Normal constructor with a real API client.
   ChatNotifier(ApiClient api)
       : _api = api,

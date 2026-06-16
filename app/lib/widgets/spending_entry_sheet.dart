@@ -15,19 +15,46 @@ class SpendingEntrySheet extends ConsumerStatefulWidget {
 class _SpendingEntrySheetState extends ConsumerState<SpendingEntrySheet> {
   final _amountCtrl = TextEditingController(), _noteCtrl = TextEditingController();
   String _cat = '餐饮';
+  bool _submitting = false;
   static const _cats = ['餐饮','交通','烟酒','购物','娱乐','其他'];
 
   @override
   void dispose() { _amountCtrl.dispose(); _noteCtrl.dispose(); super.dispose(); }
 
   Future<void> _submit() async {
-    final a = double.tryParse(_amountCtrl.text);
-    if (a == null || a <= 0) return;
-    final notifier = ref.read(spendingProvider.notifier);
-    await notifier.submit(amount: a, category: _cat,
+    final raw = _amountCtrl.text.trim().replaceAll('，', '.').replaceAll('¥', '').replaceAll('￥', '');
+    final a = double.tryParse(raw);
+    if (a == null || a <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入有效金额')),
+      );
+      return;
+    }
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    try {
+      final spending = await ref.read(spendingProvider.notifier).submit(
+        amount: a, category: _cat,
         note: _noteCtrl.text.isNotEmpty ? _noteCtrl.text : null,
-        conversationId: widget.conversationId);
-    if (mounted) Navigator.of(context).pop();
+        conversationId: widget.conversationId,
+      );
+      if (!mounted) return;
+      if (spending == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('还没连上后端')),
+        );
+        return;
+      }
+      Navigator.of(context).pop(spending);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('记账失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   @override
@@ -54,11 +81,11 @@ class _SpendingEntrySheetState extends ConsumerState<SpendingEntrySheet> {
       const SizedBox(height:16),
       SizedBox(width:double.infinity,
         child: FilledButton(
-          onPressed: _submit,
+          onPressed: _submitting ? null : _submit,
           style: FilledButton.styleFrom(backgroundColor:AppTheme.primaryGradientStart,
               padding: const EdgeInsets.symmetric(vertical:14),
               shape: RoundedRectangleBorder(borderRadius:BorderRadius.circular(12))),
-          child: const Text('记下')),
+          child: Text(_submitting ? '记下中...' : '记下')),
       ),
       const SizedBox(height:8),
     ]));
