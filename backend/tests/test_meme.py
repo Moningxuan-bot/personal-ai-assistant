@@ -219,3 +219,4 @@ async def test_kept_memes_are_injected_into_casual_chat_prompt(db_session):
     assert "## 今天的热梗" in system_prompt
     assert "赛博猫猫突然爆火" in system_prompt
     assert "不要生硬地背诵" in system_prompt
+    assert "热梗模式" in system_prompt  # MEME_PROMPT 已注入

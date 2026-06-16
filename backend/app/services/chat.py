@@ -11,7 +11,7 @@ from app.models.goal import Goal
 from app.services.memory import MemoryService
 from app.services.coach import CoachEngine
 from app.providers.llm import LLMProvider, ChatMessage
-from app.prompts.ajiu import AJIU_SYSTEM_PROMPT, CONTRADICTION_PROMPT, MODE_PROMPTS
+from app.prompts.ajiu import AJIU_SYSTEM_PROMPT, CONTRADICTION_PROMPT, MEME_PROMPT, MODE_PROMPTS
 
 # 教练模式触发词
 COACH_TRIGGERS = [
@@ -98,6 +98,7 @@ class ChatService:
             )
 
         if meme_context:
+            parts.append(MEME_PROMPT)
             parts.append(meme_context)
 
         if contradiction_context:
