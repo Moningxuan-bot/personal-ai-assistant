@@ -30,6 +30,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Personal AI Assistant", version="0.1.0", lifespan=lifespan)
 
+
+@app.get("/")
+async def root():
+    return {
+        "name": "Personal AI Assistant API",
+        "version": "0.1.0",
+        "docs": "/docs",
+    }
+
+
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
