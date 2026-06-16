@@ -541,4 +541,4 @@ goal_checks: id, goal_id, check_time, status (完成/未完成/请假),
 
 ---
 
-*本文档由 Claude Code 协助编写，基于 2026-06-16 的需求讨论。后续修改请直接编辑此文件。*
+*本文档由 Claude Code 与 Codex (GPT-5) 协助编写，基于 2026-06-16 的需求讨论。后续修改请直接编辑此文件。*

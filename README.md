@@ -90,4 +90,4 @@ docker compose up -d
 
 ---
 
-*阿玖的开发由 Claude Code 协助完成。想了解我们怎么一步步推敲出她的设计？看 [CONTEXT.md](CONTEXT.md)。*
+*阿玖的开发由 Claude Code 与 Codex (GPT-5) 协助完成。想了解我们怎么一步步推敲出她的设计？看 [CONTEXT.md](CONTEXT.md)。*
