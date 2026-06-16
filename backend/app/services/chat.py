@@ -11,7 +11,7 @@ from app.models.goal import Goal
 from app.services.memory import MemoryService
 from app.services.coach import CoachEngine
 from app.providers.llm import LLMProvider, ChatMessage
-from app.prompts.ajiu import AJIU_SYSTEM_PROMPT, MODE_PROMPTS
+from app.prompts.ajiu import AJIU_SYSTEM_PROMPT, CONTRADICTION_PROMPT, MODE_PROMPTS
 
 # 教练模式触发词
 COACH_TRIGGERS = [
@@ -72,9 +72,14 @@ class ChatService:
             return "现在是凌晨。这么晚不睡？念叨他两句，但别太凶——他可能在熬夜赶工。"
 
     def _build_system_prompt(
-        self, mode: str, memory_context: str = "", spending_context: str = ""
+        self,
+        mode: str,
+        memory_context: str = "",
+        spending_context: str = "",
+        meme_context: str = "",
+        contradiction_context: str = "",
     ) -> str:
-        """组装完整 System Prompt：基础人格 + 模式 + 时间 + 记忆 + 消费"""
+        """组装完整 System Prompt：基础人格 + 模式 + 时间 + 记忆 + 消费 + 热梗"""
         parts = [AJIU_SYSTEM_PROMPT]
 
         if mode in MODE_PROMPTS:
@@ -91,6 +96,12 @@ class ChatService:
                 f"你可以根据这些消费记录自然地和用户聊天。比如他说「昨天花了多少」"
                 f"你就去翻记录。看到烟酒消费可以念叨两句。"
             )
+
+        if meme_context:
+            parts.append(meme_context)
+
+        if contradiction_context:
+            parts.append(contradiction_context)
 
         return "\n\n".join(parts)
 
@@ -127,6 +138,23 @@ class ChatService:
         # ================================================
         # 闲聊模式 — 正常 LLM 对话
         # ================================================
+        contradiction_mockery = ""
+        contradiction_prompt = ""
+        memory_extracted = False
+        try:
+            await self.memory.extract_and_save_memories(user_msg, self.llm)
+            memory_extracted = True
+            if self.memory.last_contradictions:
+                contradiction_mockery = self._build_contradiction_mockery(
+                    self.memory.last_contradictions[0]
+                )
+                max_count = max(
+                    item.get("count", 0) for item in self.memory.last_contradictions
+                )
+                contradiction_prompt = CONTRADICTION_PROMPT.format(count=max_count)
+        except Exception:
+            pass
+
         # 4. Retrieve relevant memories
         memories = await self.memory.retrieve_relevant(user_message)
         memory_context = "\n".join(
@@ -138,11 +166,21 @@ class ChatService:
         spending_svc = SpendingService(self.db, self.llm)
         spending_context = await spending_svc.get_recent_context(hours=24, limit=5)
 
+        from app.services.meme import MemeService
+        meme_svc = MemeService(self.db, self.llm)
+        meme_context = await meme_svc.get_kept_today_context(limit=5)
+
         # 5. Get recent messages
         recent = await self._get_recent_messages(conv.id, limit=20)
 
         # 6. Build messages array
-        system_prompt = self._build_system_prompt(mode, memory_context, spending_context)
+        system_prompt = self._build_system_prompt(
+            mode,
+            memory_context,
+            spending_context,
+            meme_context,
+            contradiction_prompt,
+        )
         llm_messages = [ChatMessage(role="system", content=system_prompt)]
 
         for msg in recent:
@@ -152,6 +190,10 @@ class ChatService:
 
         # 7. Stream response tokens
         full_response = []
+        if contradiction_mockery:
+            full_response.append(contradiction_mockery)
+            yield {"type": "delta", "content": contradiction_mockery}
+
         stream = await self.llm.chat(llm_messages, stream=True)
 
         async for chunk in stream:
@@ -175,10 +217,21 @@ class ChatService:
             await self.memory.index_message(assistant_msg)
         except Exception:
             pass
-        try:
-            await self.memory.extract_and_save_memories(user_msg, self.llm)
-        except Exception:
-            pass
+        if not memory_extracted:
+            try:
+                await self.memory.extract_and_save_memories(user_msg, self.llm)
+            except Exception:
+                pass
+
+    def _build_contradiction_mockery(self, contradiction: dict) -> str:
+        """把矛盾检测结果变成阿玖开场吐槽。"""
+        new = contradiction.get("new") or "刚才那套新说法"
+        old = contradiction.get("old") or "之前那套说法"
+        count = contradiction.get("count") or 1
+        return (
+            f"等下——你说你{new}？不对啊，我记得你之前明明说{old}的。"
+            f"这是第{count}次变了。真是多变的笨蛋。\n\n"
+        )
 
     # ---------- 教练模式 ----------
 

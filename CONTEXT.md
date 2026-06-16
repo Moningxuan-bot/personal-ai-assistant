@@ -73,6 +73,21 @@
 
 ---
 
+## 当前实现状态
+
+### P2：B 站梗系统 + 记忆矛盾检测
+- **状态**：已在 `codex/p2-meme-contradiction` 分支实现。
+- **热梗系统**：新增 `Meme` 模型、迁移、`MemeService`、`/api/memes` 路由、每日任务入口 `run_daily_meme_fetch`。当天 `kept=True` 的热梗会注入闲聊 System Prompt。
+- **偏好筛选**：`MemoryService.get_preference_tags()` 从 `category="preference"` 的活跃记忆中提取标签，供热梗过滤使用。
+- **矛盾检测**：`Memory` 新增 `contradiction_topic`、`contradiction_count`、`contradiction_history`。记忆提取时会让 LLM 判断同类旧记忆是否被新说法推翻；同一话题变化第 3 次起，闲聊开头会插入阿玖吐槽。
+- **验证命令**：
+  ```powershell
+  $env:APP_ENV='development'; $env:DEVICE_SECRET='local-dev-secret'; $env:PYTHONPATH='backend'; $env:DATABASE_URL='postgresql+asyncpg://aitest:aitest@localhost:5432/aitest'; $env:TEST_DATABASE_URL='postgresql+asyncpg://aitest:aitest@localhost:5432/aitest'; C:\Users\12795\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest backend\tests -q
+  ```
+- **当前结果**：`51 passed, 2 warnings`。警告来自 Pydantic V2 对 class-based `Config` 的弃用提示。
+
+---
+
 ## 人格系统
 
 ### 语气
