@@ -62,7 +62,7 @@ class ApiClient {
       await _storage.read(key: 'device_token') ?? '';
 
   Future<void> setDeviceToken(String token) async =>
-      await _storage.write(key: 'device_token', token);
+      await _storage.write(key: 'device_token', value: token);
 
   /// Returns a stream of structured chat events (meta / delta / done / error).
   /// Uses proper UTF-8 streaming decoder to avoid splitting multi-byte chars.
