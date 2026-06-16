@@ -150,6 +150,48 @@ async def test_chat_with_memory_context(db_session):
 
 
 @pytest.mark.anyio
+async def test_chat_prepends_mockery_when_memory_changes_three_times(db_session):
+    """同一记忆话题第 3 次变化时，闲聊回复开头应先吐槽。"""
+    from app.models.memory import Memory
+
+    mock_llm = AsyncMock(spec=LLMProvider)
+
+    async def mock_stream(*args, **kwargs):
+        yield "那继续说正事。"
+
+    mock_llm.chat.side_effect = [
+        "[preference] 用户喜欢红色",
+        '{"contradicts": true, "topic": "喜欢的颜色", "old": "用户喜欢蓝色", "new": "用户喜欢红色"}',
+        mock_stream(),
+    ]
+
+    mock_embed = AsyncMock()
+    mock_embed.embed.return_value = [0.1] * 512
+
+    old_mem = Memory(
+        content="用户喜欢蓝色",
+        embedding=[0.1] * 512,
+        category="preference",
+        contradiction_topic="喜欢的颜色",
+        contradiction_count=2,
+    )
+    db_session.add(old_mem)
+    await db_session.commit()
+
+    memory = MemoryService(db_session, mock_embed)
+    service = ChatService(db_session, mock_llm, memory)
+
+    events = []
+    async for event in service.chat("我现在喜欢红色", None):
+        events.append(event)
+
+    response_text = _collect_deltas(events)
+    assert response_text.startswith("等下——你说你用户喜欢红色？")
+    assert "这是第3次变了" in response_text
+    assert "那继续说正事。" in response_text
+
+
+@pytest.mark.anyio
 async def test_config_rejects_weak_secret_in_production():
     """生产环境下弱密钥应抛出 RuntimeError。"""
     import os
