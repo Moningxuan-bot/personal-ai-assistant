@@ -4,7 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../core/api_client.dart';
 import '../models/chat_message.dart';
 
-const _defaultDevUrl = 'http://10.0.2.2:8000'; // Android emulator
+const _defaultDevUrl = 'http://localhost:8000';
 
 final apiClientProvider = FutureProvider<ApiClient>((ref) async {
   final storage = const FlutterSecureStorage();
