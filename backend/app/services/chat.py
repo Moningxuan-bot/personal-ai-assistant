@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.goal import Goal
 from app.services.memory import MemoryService
+from app.services.coach import CoachEngine
 from app.providers.llm import LLMProvider, ChatMessage
 from app.prompts.ajiu import AJIU_SYSTEM_PROMPT, MODE_PROMPTS
 
@@ -17,6 +19,9 @@ COACH_TRIGGERS = [
     "想学", "想减肥", "想锻炼", "想养成",
     "定个目标", "制定计划", "给我建议", "阿玖说正事",
 ]
+
+# 确认词
+CONFIRM_WORDS = {"行", "可以", "好", "ok", "嗯", "确认", "没问题", "就这样", "对的", "是的"}
 
 
 class ChatService:
@@ -29,14 +34,19 @@ class ChatService:
         self.db = db
         self.llm = llm
         self.memory = memory
+        self.coach = CoachEngine(llm)
 
-    def _detect_mode(self, user_message: str) -> str:
+    def _detect_mode(
+        self, user_message: str, coach_state: dict | None = None
+    ) -> str:
         """检测当前交互模式：casual / coach / butler"""
+        # 如果教练对话进行中，保持教练模式
+        if coach_state and coach_state.get("active"):
+            return "coach"
         if "阿玖说正事" in user_message:
             return "coach"
         if any(kw in user_message for kw in COACH_TRIGGERS):
             return "coach"
-        # TODO: 当有进行中的任务时，自动进入 butler 模式
         return "casual"
 
     def _time_context(self) -> str:
@@ -63,14 +73,11 @@ class ChatService:
         """组装完整 System Prompt：基础人格 + 模式 + 时间 + 记忆"""
         parts = [AJIU_SYSTEM_PROMPT]
 
-        # 模式行为准则
         if mode in MODE_PROMPTS:
             parts.append(MODE_PROMPTS[mode])
 
-        # 时间上下文
         parts.append(f"## 当前时间\n{self._time_context()}")
 
-        # 相关记忆
         if memory_context:
             parts.append(f"## 关于用户的记忆\n{memory_context}")
 
@@ -82,20 +89,43 @@ class ChatService:
         # 1. Get or create conversation
         conv = await self._get_or_create_conversation(conversation_id)
 
-        # 2. Emit meta frame FIRST — so frontend knows the conversation_id
-        mode = self._detect_mode(user_message)
-        yield {"type": "meta", "conversation_id": str(conv.id), "mode": mode}
+        # 2. Detect mode (consider existing coach state)
+        mode = self._detect_mode(user_message, conv.coach_state)
+        yield {
+            "type": "meta",
+            "conversation_id": str(conv.id),
+            "mode": mode,
+            "coach_state": conv.coach_state,
+        }
 
-        # 3. Retrieve relevant memories
+        # 3. Save user message
+        user_msg = Message(
+            conversation_id=conv.id, role="user", content=user_message
+        )
+        self.db.add(user_msg)
+        await self.db.commit()
+
+        # ================================================
+        # 教练模式 — CoachEngine 接管
+        # ================================================
+        if mode == "coach":
+            async for event in self._handle_coach_mode(conv, user_message, user_msg):
+                yield event
+            return
+
+        # ================================================
+        # 闲聊模式 — 正常 LLM 对话
+        # ================================================
+        # 4. Retrieve relevant memories
         memories = await self.memory.retrieve_relevant(user_message)
         memory_context = "\n".join(
             f"[{m.category}] {m.content}" for m in memories
         )
 
-        # 4. Get recent messages from this conversation
+        # 5. Get recent messages
         recent = await self._get_recent_messages(conv.id, limit=20)
 
-        # 5. Build messages array — personality as system prompt
+        # 6. Build messages array
         system_prompt = self._build_system_prompt(mode, memory_context)
         llm_messages = [ChatMessage(role="system", content=system_prompt)]
 
@@ -103,13 +133,6 @@ class ChatService:
             llm_messages.append(ChatMessage(role=msg.role, content=msg.content))
 
         llm_messages.append(ChatMessage(role="user", content=user_message))
-
-        # 6. Save user message
-        user_msg = Message(
-            conversation_id=conv.id, role="user", content=user_message
-        )
-        self.db.add(user_msg)
-        await self.db.commit()
 
         # 7. Stream response tokens
         full_response = []
@@ -127,20 +150,109 @@ class ChatService:
         self.db.add(assistant_msg)
         await self.db.commit()
 
-        # 9. Signal done BEFORE background work — client unblocks immediately
+        # 9. Signal done
         yield {"type": "done"}
 
-        # 10. Index messages and extract memories (runs after client receives done)
+        # 10. Background indexing
+        try:
+            await self.memory.index_message(user_msg)
+            await self.memory.index_message(assistant_msg)
+        except Exception:
+            pass
+        try:
+            await self.memory.extract_and_save_memories(user_msg, self.llm)
+        except Exception:
+            pass
+
+    # ---------- 教练模式 ----------
+
+    async def _handle_coach_mode(
+        self,
+        conv: Conversation,
+        user_message: str,
+        user_msg: Message,
+    ) -> AsyncIterator[dict]:
+        """处理教练模式消息：可能是回答教练问题，也可能是确认/拒绝计划。"""
+        coach_state = conv.coach_state
+
+        # 检测是否是计划确认
+        if coach_state and coach_state.get("pending_plan"):
+            confirmed = self._is_confirmation(user_message)
+            # 教练模式下只有明确的简短确认才当作确认
+            if confirmed and len(user_message.strip()) <= 5:
+                result = await self.coach.confirm_plan(coach_state, True)
+                await self._save_coach_result(conv, user_msg, result)
+                async for event in self._emit_coach_responses(result):
+                    yield event
+                return
+            elif not confirmed:
+                result = await self.coach.confirm_plan(coach_state, False)
+                await self._save_coach_result(conv, user_msg, result)
+                async for event in self._emit_coach_responses(result):
+                    yield event
+                return
+
+        # 正常教练流程
+        result = await self.coach.process(user_message, coach_state)
+        await self._save_coach_result(conv, user_msg, result)
+        async for event in self._emit_coach_responses(result):
+            yield event
+
+    async def _save_coach_result(
+        self, conv: Conversation, user_msg: Message, result: dict
+    ) -> None:
+        """持久化教练结果：更新 coach_state、存 assistant message、创建 Goal。"""
+        # Update coach state on conversation
+        conv.coach_state = result["coach_state"]
+
+        # Save assistant message
+        assistant_msg = Message(
+            conversation_id=conv.id,
+            role="assistant",
+            content=result["message"],
+        )
+        self.db.add(assistant_msg)
+        await self.db.commit()
+
+        # Create goal if plan confirmed
+        if result["action"] == "confirmed" and result.get("goal"):
+            goal_data = result["goal"]
+            goal = Goal(
+                conversation_id=conv.id,
+                title=goal_data["title"],
+                description=goal_data["description"],
+                milestones=goal_data.get("milestones", []),
+                status="active",
+            )
+            self.db.add(goal)
+            await self.db.commit()
+
+        # Background indexing
         try:
             await self.memory.index_message(user_msg)
             await self.memory.index_message(assistant_msg)
         except Exception:
             pass
 
-        try:
-            await self.memory.extract_and_save_memories(user_msg, self.llm)
-        except Exception:
-            pass
+    async def _emit_coach_responses(self, result: dict) -> AsyncIterator[dict]:
+        """把教练结果转换为 SSE delta 事件。"""
+        message = result["message"]
+
+        # 模拟流式输出：按句子拆分，逐句 yield
+        # （简单实现：直接整个 message 作为 delta，对教练模式够用）
+        yield {"type": "delta", "content": message}
+
+        # 附带 coach_state 更新和 action 信息
+        yield {
+            "type": "done",
+            "coach_action": result["action"],
+            "coach_state": result["coach_state"],
+        }
+
+    def _is_confirmation(self, text: str) -> bool:
+        """检测用户消息是否为确认。"""
+        cleaned = text.strip().lower().rstrip("。！!？?.")
+        return cleaned in CONFIRM_WORDS or len(cleaned) <= 2
 
     async def _get_or_create_conversation(
         self, conversation_id: uuid.UUID | None
