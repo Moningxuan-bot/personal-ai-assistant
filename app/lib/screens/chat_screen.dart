@@ -4,6 +4,7 @@ import '../core/theme.dart';
 import '../providers/chat_provider.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
+import 'settings_screen.dart';
 
 class ChatScreen extends ConsumerWidget {
   const ChatScreen({super.key});
@@ -51,7 +52,7 @@ class ChatScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        '你的助手',
+                        '阿玖',
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -80,6 +81,14 @@ class ChatScreen extends ConsumerWidget {
                     ],
                   ),
                   const Spacer(),
+                  // Settings
+                  IconButton(
+                    icon: const Icon(Icons.settings, size: 20),
+                    color: AppTheme.textSecondary,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    ),
+                  ),
                   // Live2D placeholder
                   Container(
                     width: 36,

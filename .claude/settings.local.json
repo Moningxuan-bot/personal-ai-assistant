@@ -4,7 +4,8 @@
       "Bash(python -c ' *)",
       "Bash(py -3 -c ' *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_goals.py -v)"
     ]
   }
 }

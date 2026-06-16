@@ -30,14 +30,25 @@ def get_chat_service(db: AsyncSession = Depends(get_db)) -> ChatService:
 
 @router.post("/chat")
 async def chat(request: ChatRequest, service: ChatService = Depends(get_chat_service)):
+    # 在创建 StreamingResponse 前验证 conversation_id 存在性
+    # 避免 generator 内抛 HTTPException（此时 200 已返回，404 无效）
+    if request.conversation_id:
+        from sqlalchemy.ext.asyncio import AsyncSession
+        db: AsyncSession = service.db
+        stmt = select(Conversation).where(Conversation.id == request.conversation_id)
+        result = await db.execute(stmt)
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Conversation {request.conversation_id} not found",
+            )
+
     async def event_stream():
         try:
             async for event in service.chat(
                 request.message, request.conversation_id
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except HTTPException:
-            raise
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 

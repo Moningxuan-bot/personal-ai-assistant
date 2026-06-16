@@ -52,7 +52,8 @@ DeepSeek（阿玖的语言能力）
 |------|------|------|
 | ✅ 基础搭建 | 后端 API + 数据库 + Flutter 聊天界面 | 完成 |
 | ✅ 环境部署 | Docker Compose + 本地开发环境 | 完成 |
-| 🔨 P0 开发中 | 教练对话 + 任务系统 | 规划中 |
+| ✅ P0 完成 | 教练引擎 + 任务系统 + 人格落地 | 完成 |
+| 🔧 P0-P2 修复 | 8 项 bug 修复（见下方 commit） | 完成 |
 | 📋 P1 计划中 | 支付监控 + 行为劝诫 | 待开始 |
 | 📋 P2 计划中 | B 站梗更新 + 闲聊人格 | 待开始 |
 
@@ -74,6 +75,13 @@ cd personal-ai-assistant/backend
 # 配置
 cp .env.example .env
 nano .env  # 填入你的 DeepSeek API Key
+```
+
+> ⚠️ **部署 VPS 前必须修改 `.env` 中的两项：**
+> - `APP_ENV=development` → `APP_ENV=production`
+> - `DEVICE_SECRET=local-dev-secret` → 改成强随机字符串（如 `openssl rand -hex 32` 生成）
+>
+> 生产环境使用弱密钥会导致后端启动失败。详见 `backend/.env.example` 注释。
 
 # 启动
 docker compose up -d

@@ -8,7 +8,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AI 助手',
+      title: '阿玖',
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
       home: const ChatScreen(),

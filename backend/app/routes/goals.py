@@ -1,7 +1,10 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Literal
+
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -42,11 +45,11 @@ class GoalDetailResponse(GoalResponse):
 
 
 class GoalStatusUpdate(BaseModel):
-    status: str  # active / paused / completed / abandoned
+    status: Literal["active", "paused", "completed", "abandoned"]
 
 
 class GoalCheckCreate(BaseModel):
-    status: str = "done"  # done / skipped / missed
+    status: Literal["done", "skipped", "missed", "pending"] = "done"
     note: str | None = None
 
 
@@ -75,7 +78,7 @@ async def list_active_goals(db: AsyncSession = Depends(get_db)):
 @router.get("/{goal_id}", response_model=GoalDetailResponse)
 async def get_goal(goal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """获取目标详情，含打卡记录。"""
-    stmt = select(Goal).where(Goal.id == goal_id)
+    stmt = select(Goal).options(selectinload(Goal.checks)).where(Goal.id == goal_id)
     result = await db.execute(stmt)
     goal = result.scalar_one_or_none()
     if not goal:
@@ -90,13 +93,6 @@ async def update_goal_status(
     db: AsyncSession = Depends(get_db),
 ):
     """更新目标状态。"""
-    valid_statuses = {"active", "paused", "completed", "abandoned"}
-    if body.status not in valid_statuses:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}",
-        )
-
     stmt = select(Goal).where(Goal.id == goal_id)
     result = await db.execute(stmt)
     goal = result.scalar_one_or_none()

@@ -15,20 +15,40 @@ final apiClientProvider = FutureProvider<ApiClient>((ref) async {
 final chatProvider =
     StateNotifierProvider<ChatNotifier, List<ChatMessage>>((ref) {
   final apiClientAsync = ref.watch(apiClientProvider);
-  return ChatNotifier(
-    apiClientAsync.valueOrNull ?? ApiClient(baseUrl: _defaultDevUrl),
+  return apiClientAsync.when(
+    data: (api) => ChatNotifier(api),
+    loading: () => ChatNotifier.loading(),
+    error: (e, _) => ChatNotifier.error(e),
   );
 });
 
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
-  final ApiClient _api;
+  final ApiClient? _api;
   final _uuid = const Uuid();
   String? _conversationId;
 
-  ChatNotifier(this._api) : super([]);
+  /// Normal constructor with a real API client.
+  ChatNotifier(ApiClient api)
+      : _api = api,
+        super([]);
+
+  /// Loading state — config not yet loaded, API client not ready.
+  ChatNotifier.loading()
+      : _api = null,
+        super([]);
+
+  /// Error state — config failed to load.
+  ChatNotifier.error(Object error)
+      : _api = null,
+        super([]);
+
+  bool _isSending = false;
 
   Future<void> sendMessage(String text) async {
     if (text.trim().isEmpty) return;
+    if (_isSending) return;
+    if (_api == null) return; // Not ready yet
+    _isSending = true;
 
     // Add user message
     final userMsg = ChatMessage(
@@ -100,6 +120,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
         }
         return m;
       }).toList();
+    } finally {
+      _isSending = false;
     }
   }
 

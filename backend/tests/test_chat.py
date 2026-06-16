@@ -53,7 +53,6 @@ async def test_get_or_create_conversation_existing(db_session):
 async def test_get_or_create_conversation_unknown_raises(db_session):
     """Should raise 404 when conversation_id is unknown."""
     import uuid
-    from fastapi import HTTPException
 
     mock_llm = AsyncMock(spec=LLMProvider)
     mock_embed = AsyncMock()
@@ -62,9 +61,8 @@ async def test_get_or_create_conversation_unknown_raises(db_session):
     service = ChatService(db_session, mock_llm, memory)
 
     fake_id = uuid.uuid4()
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ValueError, match="not found"):
         await service._get_or_create_conversation(fake_id)
-    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.anyio
@@ -149,3 +147,57 @@ async def test_chat_with_memory_context(db_session):
     assert "收到！" in response_text
     assert events[0]["type"] == "meta"
     assert events[-1]["type"] == "done"
+
+
+@pytest.mark.anyio
+async def test_config_rejects_weak_secret_in_production():
+    """生产环境下弱密钥应抛出 RuntimeError。"""
+    import os
+    from unittest.mock import patch
+
+    # 模拟 production + 弱密钥
+    with patch.dict(os.environ, {
+        "APP_ENV": "production",
+        "DEVICE_SECRET": "CHANGE_ME",
+    }, clear=False):
+        from importlib import reload
+        import app.config
+        with pytest.raises(RuntimeError, match="DEVICE_SECRET"):
+            reload(app.config)
+
+
+@pytest.mark.anyio
+async def test_config_allows_weak_secret_in_development():
+    """开发环境下弱密钥应不报错。"""
+    import os
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {
+        "APP_ENV": "development",
+        "DEVICE_SECRET": "CHANGE_ME",
+    }, clear=False):
+        from importlib import reload
+        import app.config
+        # 不应抛异常
+        reload(app.config)
+        assert app.config.settings.app_env == "development"
+
+
+@pytest.mark.anyio
+async def test_unknown_conversation_returns_404():
+    """未知 conversation_id 的 POST /chat 应返回 404（而非 200 + 流中断）。"""
+    import uuid
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        fake_id = uuid.uuid4()
+        response = await client.post(
+            "/api/chat",
+            json={"message": "hello", "conversation_id": str(fake_id)},
+            headers={"X-Device-Token": "local-dev-secret"},
+        )
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data.get("detail", "").lower()

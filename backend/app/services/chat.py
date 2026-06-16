@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.goal import Goal
@@ -22,6 +23,9 @@ COACH_TRIGGERS = [
 
 # 确认词
 CONFIRM_WORDS = {"行", "可以", "好", "ok", "嗯", "确认", "没问题", "就这样", "对的", "是的"}
+
+# 拒绝词（明确不要这个计划）
+REJECT_WORDS = {"不行", "不要", "不好", "算了", "重新来", "重来", "取消", "不对", "不", "no"}
 
 
 class ChatService:
@@ -175,18 +179,25 @@ class ChatService:
         """处理教练模式消息：可能是回答教练问题，也可能是确认/拒绝计划。"""
         coach_state = conv.coach_state
 
-        # 检测是否是计划确认
+        # 检测是否是计划确认/拒绝/修改
         if coach_state and coach_state.get("pending_plan"):
-            confirmed = self._is_confirmation(user_message)
-            # 教练模式下只有明确的简短确认才当作确认
-            if confirmed and len(user_message.strip()) <= 5:
+            if self._is_confirmation(user_message) and len(user_message.strip()) <= 5:
+                # 明确简短的确认词 → 确认
                 result = await self.coach.confirm_plan(coach_state, True)
                 await self._save_coach_result(conv, user_msg, result)
                 async for event in self._emit_coach_responses(result):
                     yield event
                 return
-            elif not confirmed:
+            elif self._is_rejection(user_message):
+                # 明确的拒绝词 → 重开
                 result = await self.coach.confirm_plan(coach_state, False)
+                await self._save_coach_result(conv, user_msg, result)
+                async for event in self._emit_coach_responses(result):
+                    yield event
+                return
+            else:
+                # 既不是确认也不是拒绝 → 用户的修改意见，让 LLM 修订计划
+                result = await self.coach.revise_plan(coach_state, user_message)
                 await self._save_coach_result(conv, user_msg, result)
                 async for event in self._emit_coach_responses(result):
                     yield event
@@ -204,6 +215,7 @@ class ChatService:
         """持久化教练结果：更新 coach_state、存 assistant message、创建 Goal。"""
         # Update coach state on conversation
         conv.coach_state = result["coach_state"]
+        flag_modified(conv, "coach_state")
 
         # Save assistant message
         assistant_msg = Message(
@@ -254,6 +266,17 @@ class ChatService:
         cleaned = text.strip().lower().rstrip("。！!？?.")
         return cleaned in CONFIRM_WORDS or len(cleaned) <= 2
 
+    def _is_rejection(self, text: str) -> bool:
+        """检测用户消息是否为明确拒绝。"""
+        cleaned = text.strip().lower().rstrip("。！!？?.")
+        # 单字拒绝或短拒绝词
+        if cleaned in REJECT_WORDS:
+            return True
+        # "不行，..." 也算拒绝
+        if any(cleaned.startswith(w) for w in REJECT_WORDS if len(w) >= 2):
+            return True
+        return False
+
     async def _get_or_create_conversation(
         self, conversation_id: uuid.UUID | None
     ) -> Conversation:
@@ -263,12 +286,8 @@ class ChatService:
             conv = result.scalar_one_or_none()
             if conv:
                 return conv
-            # Unknown conversation_id → 404, don't silently create
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=404,
-                detail=f"Conversation {conversation_id} not found",
-            )
+            # Unknown conversation_id — route layer should pre-validate and return 404
+            raise ValueError(f"Conversation {conversation_id} not found")
 
         # Only create new conversation when no ID provided
         conv = Conversation()

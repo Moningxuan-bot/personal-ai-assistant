@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/theme.dart';
+import '../providers/chat_provider.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _storage = const FlutterSecureStorage();
   final _serverController = TextEditingController();
   final _tokenController = TextEditingController();
@@ -32,6 +34,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     await _storage.write(key: 'server_url', value: _serverController.text);
     await _storage.write(key: 'device_token', value: _tokenController.text);
+    ref.invalidate(apiClientProvider);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('已保存')),

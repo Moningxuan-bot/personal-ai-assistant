@@ -8,6 +8,7 @@
 - 6 问全过 → 生成计划摘要 → 等待确认
 """
 
+import copy
 import json
 import uuid
 from datetime import datetime
@@ -124,6 +125,9 @@ class CoachEngine:
                 "plan": None,
             }
 
+        # 深拷贝，避免原地修改 ORM 取出的 dict 导致 SQLAlchemy 不追踪变更
+        coach_state = copy.deepcopy(coach_state)
+
         current_q_idx = coach_state["current_question"] - 1  # 0-based
 
         # 边界检查
@@ -191,6 +195,100 @@ class CoachEngine:
                 "plan": None,
             }
 
+    async def revise_plan(self, coach_state: dict, feedback: str) -> dict:
+        """
+        用户对计划提出了修改意见（不是确认也不是拒绝）。
+
+        Returns:
+            {
+                "action": "plan_ready",   # 修订后重新等待确认
+                "coach_state": {...},
+                "message": "...",
+                "plan": {...},            # 修订后的计划
+            }
+        """
+        coach_state = copy.deepcopy(coach_state)
+        plan = coach_state.get("pending_plan", {})
+        answers = coach_state.get("answers", {})
+
+        revised_plan = await self._revise_plan_with_llm(plan, answers, feedback)
+        coach_state["pending_plan"] = revised_plan
+
+        milestones_text = "\n".join(
+            f"  {i+1}. {m['text']}（通过标准: {m.get('criteria', '自检')}）"
+            for i, m in enumerate(revised_plan.get("milestones", []))
+        )
+
+        return {
+            "action": "plan_ready",
+            "coach_state": coach_state,
+            "message": self._ajiufy(
+                f"行，我按你说的改了一下，你再看看：\n\n"
+                f"📌 {revised_plan['title']}\n"
+                f"   {revised_plan['description']}\n\n"
+                f"🗺️ 里程碑：\n{milestones_text}\n\n"
+                f"这次行不行？"
+            ),
+            "plan": revised_plan,
+        }
+
+    async def _revise_plan_with_llm(
+        self, current_plan: dict, answers: dict, feedback: str
+    ) -> dict:
+        """让 LLM 根据用户反馈修订计划。"""
+        system_prompt = f"""{COACH_PERSONA}
+
+用户看了计划摘要后给了修改意见。请根据反馈修订计划。
+
+原始六问回答：
+- 目标画像：{answers.get('goal_picture', '')}
+- 当前基线：{answers.get('baseline', '')}
+- 可用资源：{answers.get('resources', '')}
+- 硬约束：{answers.get('constraints', '')}
+- 动机来源：{answers.get('motivation', '')}
+- 里程碑：{answers.get('milestones', '')}
+
+当前计划：
+- 标题：{current_plan.get('title', '')}
+- 描述：{current_plan.get('description', '')}
+- 里程碑：{json.dumps(current_plan.get('milestones', []), ensure_ascii=False)}
+
+用户反馈："{feedback}"
+
+请根据反馈修改计划，以 JSON 格式返回（只返回 JSON）：
+
+{{
+  "title": "目标标题（一句话，5-15字）",
+  "description": "目标描述（2-4句话）",
+  "milestones": [
+    {{"text": "里程碑1描述", "criteria": "通过标准"}},
+    ...
+  ]
+}}
+
+注意：
+- 保留用户的六问回答作为约束（硬约束不能破）
+- 只改用户反馈指出的部分，其他保持不变
+- 用阿玖的语气回应时，可以先吐槽一下用户的挑剔（"行行行，要求还挺多"），然后再呈现修订结果"""
+        messages = [ChatMessage(role="system", content=system_prompt)]
+
+        try:
+            response = await self.llm.chat(messages, stream=False)
+            text = response.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1]
+                if text.endswith("```"):
+                    text = text[:-3]
+            return json.loads(text)
+        except (json.JSONDecodeError, Exception):
+            # LLM 失败时沿用原计划，只把反馈加进描述
+            return {
+                "title": current_plan.get("title", "未命名目标"),
+                "description": current_plan.get("description", "")
+                + f"\n（用户补充：{feedback}）",
+                "milestones": current_plan.get("milestones", []),
+            }
+
     async def confirm_plan(self, coach_state: dict, confirmed: bool) -> dict:
         """
         用户对计划摘要的回应。
@@ -203,6 +301,8 @@ class CoachEngine:
                 "goal": {...} | None,    # 确认后返回 goal 数据
             }
         """
+        coach_state = copy.deepcopy(coach_state)
+
         if confirmed:
             plan = coach_state.get("pending_plan", {})
             goal_data = {

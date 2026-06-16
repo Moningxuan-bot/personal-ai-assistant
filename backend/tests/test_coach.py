@@ -239,3 +239,83 @@ async def test_coach_state_persists(db_session):
     assert loaded.coach_state["active"] is True
     assert loaded.coach_state["current_question"] == 3
     assert loaded.coach_state["answers"]["goal_picture"] == "学爬虫"
+
+
+@pytest.mark.anyio
+async def test_pending_plan_revision_does_not_restart():
+    """修改意见不应回到第一问，而是修订计划。"""
+    mock_llm = AsyncMock()
+    mock_llm.chat.return_value = json.dumps({
+        "title": "学Python（修订版）",
+        "description": "根据你的反馈调整了节奏。",
+        "milestones": [
+            {"text": "每天30分钟基础语法", "criteria": "完成10道练习题"},
+            {"text": "完成一个小项目", "criteria": "能独立写爬虫"},
+        ],
+    })
+
+    engine = CoachEngine(mock_llm)
+
+    state = {
+        "active": True,
+        "current_question": 7,
+        "answers": {q["id"]: f"{q['label']}的回答" for q in QUESTIONS},
+        "follow_up_count": 0,
+        "pending_plan": {
+            "title": "学Python（原版）",
+            "description": "每天2小时学习",
+            "milestones": [
+                {"text": "每天2小时基础语法", "criteria": "完成第一章"},
+            ],
+        },
+    }
+
+    result = await engine.revise_plan(state, "里程碑太激进了，改成每天30分钟")
+
+    assert result["action"] == "plan_ready"
+    # 确认没有回到第一问
+    assert result["coach_state"]["current_question"] == 7
+    assert result["coach_state"].get("pending_plan") is not None
+    assert "30分钟" in result["plan"]["milestones"][0]["text"] or \
+           "30分钟" in result["message"]
+    # 确认计划已修订
+    assert "学Python（修订版）" in result["plan"]["title"]
+
+
+@pytest.mark.anyio
+async def test_coach_state_mutation_persists_after_update(db_session):
+    """教练对话中更新 coach_state 后应持久化到数据库。"""
+    import copy
+    from app.models.conversation import Conversation
+    from app.services.coach import CoachEngine
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+
+    mock_llm = AsyncMock()
+    mock_llm.chat.return_value = json.dumps({
+        "pass": True,
+        "summary": "三个月内学会Python爬虫",
+        "praise": "行吧，这次挺具体。",
+    })
+
+    engine = CoachEngine(mock_llm)
+
+    # 创建已有教练状态的对话
+    conv = Conversation()
+    conv.coach_state = engine.init_state()
+    db_session.add(conv)
+    await db_session.commit()
+
+    # 模拟一次教练对话：deepcopy + 修改 + flag_modified
+    state = copy.deepcopy(conv.coach_state)
+    result = await engine.process("想三个月内学会Python爬虫，能独立采集数据", state)
+
+    conv.coach_state = result["coach_state"]
+    flag_modified(conv, "coach_state")
+    await db_session.commit()
+
+    # 重新加载，验证状态已更新
+    stmt = select(Conversation).where(Conversation.id == conv.id)
+    reloaded = (await db_session.execute(stmt)).scalar_one()
+    assert reloaded.coach_state["current_question"] == 2  # 进入了第二问
+    assert reloaded.coach_state["answers"].get("goal_picture") is not None
