@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../models/spending.dart';
 
 class ChatStreamEvent {
   final String type; // "meta", "delta", "done", "error"
@@ -103,5 +104,27 @@ class ApiClient {
 
   Future<void> deleteConversation(String conversationId) async {
     await _dio.delete('/api/conversations/$conversationId');
+  }
+
+  Future<Spending> createSpending({
+    required double amount, required String category,
+    String? note, String? conversationId,
+  }) async {
+    final data = <String, dynamic>{'amount': amount, 'category': category};
+    if (note != null) data['note'] = note;
+    if (conversationId != null) data['conversation_id'] = conversationId;
+    final resp = await _dio.post('/api/spendings', data: data);
+    return Spending.fromJson(resp.data);
+  }
+
+  Future<List<Spending>> listSpendings({int page = 1, String? category}) async {
+    final resp = await _dio.get('/api/spendings',
+        queryParameters: {'page': page, if (category != null) 'category': category});
+    return (resp.data as List).map((e) => Spending.fromJson(e)).toList();
+  }
+
+  Future<Map<String, dynamic>> getSpendingStats() async {
+    final resp = await _dio.get('/api/spendings/stats');
+    return resp.data;
   }
 }

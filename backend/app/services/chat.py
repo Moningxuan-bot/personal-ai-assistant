@@ -72,9 +72,9 @@ class ChatService:
             return "现在是凌晨。这么晚不睡？念叨他两句，但别太凶——他可能在熬夜赶工。"
 
     def _build_system_prompt(
-        self, mode: str, memory_context: str = ""
+        self, mode: str, memory_context: str = "", spending_context: str = ""
     ) -> str:
-        """组装完整 System Prompt：基础人格 + 模式 + 时间 + 记忆"""
+        """组装完整 System Prompt：基础人格 + 模式 + 时间 + 记忆 + 消费"""
         parts = [AJIU_SYSTEM_PROMPT]
 
         if mode in MODE_PROMPTS:
@@ -84,6 +84,13 @@ class ChatService:
 
         if memory_context:
             parts.append(f"## 关于用户的记忆\n{memory_context}")
+
+        if spending_context:
+            parts.append(
+                f"## 用户近期消费\n{spending_context}\n\n"
+                f"你可以根据这些消费记录自然地和用户聊天。比如他说「昨天花了多少」"
+                f"你就去翻记录。看到烟酒消费可以念叨两句。"
+            )
 
         return "\n\n".join(parts)
 
@@ -126,11 +133,16 @@ class ChatService:
             f"[{m.category}] {m.content}" for m in memories
         )
 
+        # 4.5. Fetch recent spending context for casual chat
+        from app.services.spending import SpendingService
+        spending_svc = SpendingService(self.db, self.llm)
+        spending_context = await spending_svc.get_recent_context(hours=24, limit=5)
+
         # 5. Get recent messages
         recent = await self._get_recent_messages(conv.id, limit=20)
 
         # 6. Build messages array
-        system_prompt = self._build_system_prompt(mode, memory_context)
+        system_prompt = self._build_system_prompt(mode, memory_context, spending_context)
         llm_messages = [ChatMessage(role="system", content=system_prompt)]
 
         for msg in recent:
