@@ -11,7 +11,11 @@ from app.providers.llm import LLMProvider
 async def test_create_spending_with_reaction(db_session):
     """提交消费应返回阿玖卡片级反应。"""
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = json.dumps({"reaction":"又吃麻辣烫？","needs_chat":False,"chat_reaction":""})
+    # side_effect: 第 1 次调用=判定, 第 2 次=reaction 文本 (via voice)
+    mock_llm.chat.side_effect = [
+        json.dumps({"needs_chat": False, "risk_level": "low", "risk_reason": ""}),
+        "又吃麻辣烫？",
+    ]
     svc = SpendingService(db_session, mock_llm)
     r = await svc.create_spending(35.5, "餐饮", "麻辣烫", None)
     assert r["amount"] == 35.5
@@ -23,20 +27,27 @@ async def test_create_spending_with_reaction(db_session):
 async def test_cigarette_triggers_chat():
     """烟酒类应触发聊天级反应。"""
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = json.dumps(
-        {"reaction":"又买烟？","needs_chat":True,"chat_reaction":"这个月第N次了。你的肺不是我的。"})
+    mock_llm.chat.side_effect = [
+        json.dumps({"needs_chat": True, "risk_level": "high", "risk_reason": "smoking_frequent"}),
+        "又买烟？",
+        "这个月第N次了。你的肺不是我的，但我在意。",
+    ]
     svc = SpendingService(None, mock_llm)
     r = await svc._judge_spending(25, "烟酒", "买烟",
         {"same_category_count_24h":2,"same_category_count_month":5,"same_category_total":125,"monthly_total":2000})
     assert r["needs_chat"] is True
     assert len(r["chat_reaction"]) > 10
+    assert "肺" in r["chat_reaction"]
 
 
 @pytest.mark.anyio
 async def test_normal_spending_no_chat(db_session):
     """普通小消费不应触发聊天级反应。"""
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = json.dumps({"reaction":"4块地铁，记下了。","needs_chat":False,"chat_reaction":""})
+    mock_llm.chat.side_effect = [
+        json.dumps({"needs_chat": False, "risk_level": "low", "risk_reason": ""}),
+        "4块地铁，记下了。",
+    ]
     svc = SpendingService(db_session, mock_llm)
     r = await svc.create_spending(4, "交通", "地铁", None)
     assert r["chat_reaction"] is None
@@ -74,7 +85,7 @@ async def test_stats(db_session):
     ])
     await db_session.commit()
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = "还行。"
+    mock_llm.chat.return_value = "还行。"  # voice 的月度点评
     s = await SpendingService(db_session, mock_llm).get_stats()
     assert s["total"] == 300.0
     assert s["by_category"]["餐饮"] == 100.0
@@ -89,6 +100,8 @@ async def test_llm_failure_fallback(db_session):
     r = await svc.create_spending(25, "烟酒", "买烟", None)
     assert r["reaction"]
     assert len(r["reaction"]) > 0
+    # 烟酒 LLM 异常时仍触发聊天（默认逻辑）
+    assert r["chat_reaction"] is not None
 
 
 @pytest.mark.anyio
@@ -110,7 +123,11 @@ async def test_recent_context(db_session):
 async def test_llm_string_false_needs_chat_ignored():
     """LLM 返回 needs_chat: 'false'（字符串）不应触发聊天级反应。"""
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = json.dumps({"reaction":"行吧。","needs_chat":"false","chat_reaction":""})
+    # 判定返回 needs_chat="false"（字符串），reaction 文本
+    mock_llm.chat.side_effect = [
+        json.dumps({"needs_chat": "false", "risk_level": "low", "risk_reason": ""}),
+        "行吧。",
+    ]
     svc = SpendingService(None, mock_llm)
     r = await svc._judge_spending(10, "餐饮", "午餐", {
         "same_category_count_24h":1,"same_category_count_month":3,"same_category_total":100,"monthly_total":500})
@@ -122,7 +139,11 @@ async def test_llm_string_false_needs_chat_ignored():
 async def test_llm_empty_reaction_fallback():
     """LLM 返回空 reaction 时应使用默认 reaction。"""
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = json.dumps({"reaction":"","needs_chat":False,"chat_reaction":""})
+    # 判定正常，voice 渲染返回空字符串 → 回落默认模板
+    mock_llm.chat.side_effect = [
+        json.dumps({"needs_chat": False, "risk_level": "low", "risk_reason": ""}),
+        "",
+    ]
     svc = SpendingService(None, mock_llm)
     r = await svc._judge_spending(20, "餐饮", "午饭", {
         "same_category_count_24h":1,"same_category_count_month":1,"same_category_total":20,"monthly_total":20})
@@ -139,8 +160,12 @@ async def test_chat_reaction_with_conversation_id(db_session):
     await db_session.commit()
 
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = json.dumps(
-        {"reaction":"又抽烟？","needs_chat":True,"chat_reaction":"第N根了吧。你的肺不是我的，但我在意。"})
+    # side_effect: 判定 → reaction 文本 → chat_reaction 文本
+    mock_llm.chat.side_effect = [
+        json.dumps({"needs_chat": True, "risk_level": "high", "risk_reason": "smoking_frequent"}),
+        "又抽烟？",
+        "第N根了吧。你的肺不是我的，但我在意。",
+    ]
     svc = SpendingService(db_session, mock_llm)
     r = await svc.create_spending(30, "烟酒", "买烟", conv.id)
 

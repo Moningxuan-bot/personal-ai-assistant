@@ -3,16 +3,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import get_db
 from app.schemas.spending import SpendingCreate, SpendingResponse, SpendingStats
 from app.services.spending import SpendingService
+from app.services.ajiu_voice import AjiuVoiceService
 from app.providers.llm import DeepSeekProvider
 from app.config import settings
 
 router = APIRouter(tags=["spendings"], prefix="/spendings")
 
 llm = DeepSeekProvider(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
+voice = AjiuVoiceService(llm)
 
 
 def get_service(db: AsyncSession = Depends(get_db)) -> SpendingService:
-    return SpendingService(db, llm)
+    return SpendingService(db, llm, voice=voice)
 
 
 @router.post("", response_model=SpendingResponse)
