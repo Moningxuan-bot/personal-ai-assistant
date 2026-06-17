@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.message import Message
 from app.models.memory import Memory
 from app.providers.embedding import EmbeddingProvider
+from app.utils import extract_json_from_llm
 
 
 class MemoryService:
@@ -207,7 +208,7 @@ class MemoryService:
         )
         response = await llm.chat([prompt], stream=False)
         try:
-            data = json.loads(response.strip())
+            data = extract_json_from_llm(response)
         except (TypeError, json.JSONDecodeError):
             return {"contradicts": False}
         if not isinstance(data, dict):

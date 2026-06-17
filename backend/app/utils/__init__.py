@@ -6,9 +6,6 @@
 """
 
 import json
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 def extract_json_from_llm(text: str) -> dict | list:

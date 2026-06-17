@@ -120,8 +120,7 @@ class CoachEngine:
             return {
                 "action": "ask_question",
                 "coach_state": state,
-                "message": 
-                    f"行，那咱们开始掰扯。{q['ask']}"
+                "message": f"行，那咱们开始掰扯。{q['ask']}"
                 ,
                 "plan": None,
             }
@@ -157,9 +156,7 @@ class CoachEngine:
             return {
                 "action": "ask_question",
                 "coach_state": coach_state,
-                "message": 
-                    f"{praise}\n\n行，下一个问题。{next_q['ask']}"
-                ,
+                "message": f"{praise}\n\n行，下一个问题。{next_q['ask']}",
                 "plan": None,
             }
         else:
@@ -180,9 +177,7 @@ class CoachEngine:
                 return {
                     "action": "ask_question",
                     "coach_state": coach_state,
-                    "message": 
-                        f"算了算了，问了三遍都说不清楚，先这样吧。（叹气）\n\n{next_q['ask']}"
-                    ,
+                    "message": f"算了算了，问了三遍都说不清楚，先这样吧。（叹气）\n\n{next_q['ask']}",
                     "plan": None,
                 }
 
@@ -223,8 +218,7 @@ class CoachEngine:
         return {
             "action": "plan_ready",
             "coach_state": coach_state,
-            "message": 
-                f"行，我按你说的改了一下，你再看看：\n\n"
+            "message": f"行，我按你说的改了一下，你再看看：\n\n"
                 f"📌 {revised_plan['title']}\n"
                 f"   {revised_plan['description']}\n\n"
                 f"🗺️ 里程碑：\n{milestones_text}\n\n"
@@ -311,11 +305,11 @@ class CoachEngine:
             return {
                 "action": "confirmed",
                 "coach_state": coach_state,
-                "message": 
+                "message": (
                     "行吧，计划我记下了。我会盯着你的进度的——别想偷懒。\n\n"
                     "你现在可以随时跟我说「阿玖，看看我的计划」或者「今天做完了XX」，"
                     "我会帮你追踪。加油吧，笨蛋。"
-                ,
+                ),
                 "goal": goal_data,
             }
         else:
@@ -327,9 +321,7 @@ class CoachEngine:
             return {
                 "action": "revise",
                 "coach_state": coach_state,
-                "message": 
-                    f"行，那咱们重新捋一遍。{q['ask']}"
-                ,
+                "message": f"行，那咱们重新捋一遍。{q['ask']}",
                 "goal": None,
             }
 
@@ -407,7 +399,7 @@ class CoachEngine:
         return {
             "action": "plan_ready",
             "coach_state": coach_state,
-            "message": 
+            "message": (
                 f"好了，六问全过。我帮你捋一下：\n\n"
                 f"📌 {plan['title']}\n"
                 f"   {plan['description']}\n\n"
@@ -415,7 +407,7 @@ class CoachEngine:
                 f"确认一下——这个计划行不行？\n"
                 f"• 行 → 我就帮你记下来，每天盯着你做\n"
                 f"• 不行 → 说哪里要改，咱们重新捋"
-            ,
+            ),
             "plan": plan,
         }
 
@@ -455,12 +447,7 @@ class CoachEngine:
 
         try:
             response = await self.llm.chat(messages, stream=False)
-            text = response.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1]
-                if text.endswith("```"):
-                    text = text[:-3]
-            return json.loads(text)
+            return extract_json_from_llm(response)
         except (json.JSONDecodeError, Exception):
             # Fallback: 自己拼一个
             return {
