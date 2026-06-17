@@ -135,6 +135,52 @@ async def test_render_spending_reaction_short_and_safe():
 
 
 @pytest.mark.anyio
+async def test_validator_rejects_long_spending_reaction_even_with_confirm_word():
+    """记账即时反应即使有确认词，也不能退化成长篇劝诫。"""
+    text = (
+        "你管这叫解压？我管这叫慢性自残。要不要姐教你个更便宜的消遣——"
+        "比如对着镜子数你牙上的烟渍？上个月咳得跟破风箱似的，现在倒挺健忘啊。"
+        "要么现在把电子烟扔了，要么下周我直接往你购物车里塞止咳糖浆十箱。行吧，记下了。"
+    )
+
+    result = OutputValidator.validate(
+        text,
+        event_type=AjiuEventType.SPENDING_REACTION,
+    )
+
+    assert not result.passed
+    assert any("记账回复过长" in issue for issue in result.issues)
+
+
+@pytest.mark.anyio
+async def test_render_spending_reaction_falls_back_when_llm_returns_long_text():
+    """LLM 生成长篇记账反应时，应降级到短兜底模板。"""
+    mock_llm = AsyncMock(spec=LLMProvider)
+    mock_llm.chat.return_value = (
+        "你管这叫解压？我管这叫慢性自残。要不要姐教你个更便宜的消遣——"
+        "比如对着镜子数你牙上的烟渍？上个月咳得跟破风箱似的，现在倒挺健忘啊。"
+        "要么现在把电子烟扔了，要么下周我直接往你购物车里塞止咳糖浆十箱。行吧，记下了。"
+    )
+    voice = AjiuVoiceService(mock_llm)
+
+    text = await voice.render_event(VoiceEvent(
+        event_type=AjiuEventType.SPENDING_REACTION,
+        payload={
+            "amount": 25, "category": "烟酒", "note": "电子烟",
+            "stats": {"same_category_count_24h": 9, "same_category_count_month": 12,
+                       "same_category_total": 300, "monthly_total": 1500},
+            "risk_level": "high", "risk_reason": "smoking_frequent",
+        },
+    ))
+
+    assert len(text) <= 80
+    assert any(w in text for w in ("记下", "记了", "行吧", "知道了", "记住"))
+    banned = ["慢性自残", "烟渍", "止咳糖浆", "破风箱", "肺", "救命"]
+    for word in banned:
+        assert word not in text
+
+
+@pytest.mark.anyio
 async def test_render_spending_monthly_comment():
     """spending_monthly_comment 事件应渲染为月度点评。"""
     mock_llm = AsyncMock(spec=LLMProvider)

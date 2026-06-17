@@ -11,9 +11,9 @@
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Optional
 
 from app.prompts.ajiu import AJIU_SYSTEM_PROMPT
 from app.providers.llm import LLMProvider, ChatMessage
@@ -130,10 +130,12 @@ class OutputValidator:
         "建议您", "消费流水", "已记录",
         "宝贝", "亲爱的", "主人",
         "肺癌", "折寿", "减寿", "短命",
-        "你配吗",
+        "你配吗", "慢性自残", "烟渍", "破风箱", "止咳糖浆",
     ]
 
     MAX_LENGTH = 600
+    MAX_SPENDING_LENGTH = 80
+    MAX_SPENDING_SENTENCES = 2
     MIN_LENGTH = 2
     MAX_QUESTION_RATIO = 0.35
 
@@ -173,6 +175,18 @@ class OutputValidator:
             has_confirm = any(w in text for w in ("记下", "记上", "记了", "记住", "知道了", "行吧", "行了", "好嘞"))
             if not has_confirm:
                 issues.append("记账回复缺少确认词（应含：记下了/行吧/知道了 等）")
+            if len(text) > cls.MAX_SPENDING_LENGTH:
+                issues.append(
+                    f"记账回复过长: {len(text)} 字 (上限 {cls.MAX_SPENDING_LENGTH})"
+                )
+            sentence_count = len(
+                [s for s in re.split(r"[。！？!?]+", text) if s.strip()]
+            )
+            if sentence_count > cls.MAX_SPENDING_SENTENCES:
+                issues.append(
+                    f"记账回复句子过多: {sentence_count} 句 "
+                    f"(上限 {cls.MAX_SPENDING_SENTENCES})"
+                )
 
         return ValidationResult(passed=len(issues) == 0, issues=issues)
 
@@ -321,7 +335,7 @@ class AjiuVoiceService:
         templates = {
             "餐饮": f"又花了{amount:.0f}？行吧。",
             "交通": "出行费记下了。",
-            "烟酒": f"{amount:.0f}块。……算了不说了。",
+            "烟酒": f"烟酒{amount:.0f}块，记下了。……算了不说了。",
             "购物": f"买了{amount:.0f}。开心就好。",
             "娱乐": "玩得开心~",
             "其他": f"记下了，{amount:.0f}元。",
