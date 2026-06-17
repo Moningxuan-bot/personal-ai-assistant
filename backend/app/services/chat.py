@@ -372,3 +372,73 @@ class ChatService:
         )
         result = await self.db.execute(stmt)
         return list(reversed(result.scalars().all()))
+
+    # ---------- 事件响应：统一入口 ----------
+
+    async def respond_to_spending(
+        self, spending_payload: dict, conversation_id: uuid.UUID
+    ) -> str:
+        """记账事件 → 阿玖通过完整人格链路自然回应。
+
+        这是统一入口：不再让 SpendingService 直接写 assistant 消息。
+        阿玖通过 AJIU_SYSTEM_PROMPT + mode + time + memory + event 看到事件并回应。
+        """
+        conv = await self._get_or_create_conversation(conversation_id)
+
+        # 构建事件描述
+        p = spending_payload
+        event_desc = (
+            f"用户刚记了一笔消费：{p['category']} ¥{p['amount']:.0f}"
+            f"{'，备注：' + p['note'] if p.get('note') else ''}。"
+            f"24小时内同类消费 {p.get('same_category_count_24h', 0)} 次。"
+        )
+
+        # 模式：默认闲聊
+        mode = "casual"
+
+        # 获取记忆上下文
+        memory_context = ""
+        try:
+            memories = await self.memory.retrieve_relevant(event_desc)
+            memory_context = "\n".join(f"[{m.category}] {m.content}" for m in memories)
+        except Exception:
+            pass
+
+        # 获取消费上下文
+        from app.services.spending import SpendingService
+        spending_svc = SpendingService(self.db, self.llm)
+        spending_context = await spending_svc.get_recent_context(hours=24, limit=5)
+
+        # 获取最近消息
+        recent = await self._get_recent_messages(conv.id, limit=10)
+
+        # 组装完整 system prompt
+        system_prompt = self._build_system_prompt(
+            mode, memory_context, spending_context, "", ""
+        )
+
+        # 追加事件
+        system_prompt += (
+            f"\n\n## 刚刚发生了一件事（你需要自然回应）\n{event_desc}\n\n"
+            f"你看到了这笔消费。你不是系统通知，你是阿玖——用你的方式自然地说一句。"
+            f"不要长篇大论，1-2 句，像朋友随口念叨。"
+        )
+
+        # 构建 LLM messages
+        llm_messages = [ChatMessage(role="system", content=system_prompt)]
+        for msg in recent:
+            llm_messages.append(ChatMessage(role=msg.role, content=msg.content))
+
+        # 非流式生成
+        response_text = (await self.llm.chat(llm_messages, stream=False)).strip()
+
+        # 保存 assistant message
+        assistant_msg = Message(
+            conversation_id=conv.id,
+            role="assistant",
+            content=response_text,
+        )
+        self.db.add(assistant_msg)
+        await self.db.commit()
+
+        return response_text
