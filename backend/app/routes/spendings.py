@@ -6,13 +6,12 @@ from app.services.spending import SpendingService
 from app.services.chat import ChatService
 from app.services.memory import MemoryService
 from app.services.ajiu_voice import AjiuVoiceService
-from app.providers.llm import DeepSeekProvider
+from app.providers.llm import get_llm
 from app.providers.embedding import embed_provider
-from app.config import settings
 
 router = APIRouter(tags=["spendings"], prefix="/spendings")
 
-llm = DeepSeekProvider(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
+llm = get_llm()
 voice = AjiuVoiceService(llm)
 
 

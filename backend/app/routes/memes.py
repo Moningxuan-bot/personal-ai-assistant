@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.database import get_db
 from app.models.meme import Meme
-from app.providers.llm import DeepSeekProvider
+from app.providers.llm import get_llm
 from app.providers.embedding import embed_provider
 from app.services.memory import MemoryService
 from app.services.meme import MemeService
@@ -16,7 +16,7 @@ from app.services.meme import MemeService
 
 router = APIRouter(tags=["memes"], prefix="/memes")
 
-llm = DeepSeekProvider(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
+llm = get_llm()
 
 
 class MemeResponse(BaseModel):

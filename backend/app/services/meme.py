@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.meme import Meme
 from app.providers.llm import ChatMessage, LLMProvider
+from app.utils import extract_json_from_llm
 
 
 class MemeService:
@@ -173,12 +174,7 @@ class MemeService:
 
         try:
             response = await self.llm.chat([prompt], stream=False)
-            text = response.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1]
-                if text.endswith("```"):
-                    text = text[:-3]
-            parsed = json.loads(text)
+            parsed = extract_json_from_llm(response)
             return parsed if isinstance(parsed, list) else []
         except Exception:
             return memes

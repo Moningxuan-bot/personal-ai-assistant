@@ -8,10 +8,6 @@ class EmbeddingProvider(ABC):
     async def embed(self, text: str) -> list[float]:
         ...
 
-    @abstractmethod
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        ...
-
 
 class SentenceTransformerProvider(EmbeddingProvider):
     """Local embedding using sentence-transformers (lightweight, free, bge-small-zh)."""
@@ -34,14 +30,6 @@ class SentenceTransformerProvider(EmbeddingProvider):
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, model.encode, text)
         return result.tolist()
-
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        import asyncio
-
-        model = self._load_model()
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(None, model.encode, texts)
-        return [r.tolist() for r in results]
 
 
 # Singleton instance — used by lifespan (preload) and routes

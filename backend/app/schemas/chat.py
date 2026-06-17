@@ -6,7 +6,6 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
     message: str
-    stream: bool = True
 
 
 class MessageResponse(BaseModel):

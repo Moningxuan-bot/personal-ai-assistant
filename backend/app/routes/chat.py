@@ -10,17 +10,14 @@ from app.models.message import Message
 from app.schemas.chat import ChatRequest, MessageResponse
 from app.services.chat import ChatService
 from app.services.memory import MemoryService
-from app.providers.llm import DeepSeekProvider
+from app.providers.llm import get_llm
 from app.providers.embedding import embed_provider
 from app.config import settings
 
 router = APIRouter(tags=["chat"])
 
 # Singleton providers (initialized at import time)
-llm_provider = DeepSeekProvider(
-    api_key=settings.deepseek_api_key,
-    base_url=settings.deepseek_base_url,
-)
+llm_provider = get_llm()
 
 
 def get_chat_service(db: AsyncSession = Depends(get_db)) -> ChatService:

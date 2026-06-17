@@ -33,22 +33,6 @@ class AjiuEventType(StrEnum):
     SPENDING_CHAT_REACTION = "spending_chat_reaction" # 聊天级 3-5 句
     SPENDING_MONTHLY_COMMENT = "spending_monthly_comment"  # 月度点评
 
-    # --- 教练事件（预留） ---
-    COACH_FIRST_ASK = "coach_first_ask"
-    COACH_ANSWER_PASS = "coach_answer_pass"
-    COACH_ANSWER_FAIL = "coach_answer_fail"
-    COACH_SIGH_MOVE_ON = "coach_sigh_move_on"
-    COACH_PLAN_READY = "coach_plan_ready"
-    COACH_REVISE = "coach_revise"
-    COACH_CONFIRMED = "coach_confirmed"
-    COACH_REJECTED = "coach_rejected"
-
-    # --- 梗事件（预留） ---
-    MEME_REWRITE = "meme_rewrite"
-
-    # --- 记忆事件（预留） ---
-    CONTRADICTION_MOCKERY = "contradiction_mockery"
-
 
 # ============================================================
 # 数据结构

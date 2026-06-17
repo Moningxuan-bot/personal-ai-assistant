@@ -37,21 +37,6 @@ class MemoryService:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def retrieve_messages(
-        self, query: str, limit: int = 3
-    ) -> list[Message]:
-        """Vector search on raw messages for recent context."""
-        query_vec = await self.embed_provider.embed(query)
-
-        stmt = (
-            select(Message)
-            .where(Message.embedding.is_not(None))
-            .order_by(Message.embedding.cosine_distance(query_vec))
-            .limit(limit)
-        )
-        result = await self.db.execute(stmt)
-        return list(result.scalars().all())
-
     async def get_preference_tags(self) -> list[str]:
         """从偏好记忆中提取阿玖用于筛选热梗的标签。"""
         stmt = (

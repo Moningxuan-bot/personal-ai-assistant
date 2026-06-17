@@ -83,3 +83,21 @@ class DeepSeekProvider(LLMProvider):
         """DeepSeek doesn't have a dedicated embedding API yet.
         Use EmbeddingProvider for embeddings."""
         raise NotImplementedError("Use EmbeddingProvider for embeddings")
+
+
+# ---- singleton factory ----
+
+_llm_instance: DeepSeekProvider | None = None
+
+
+def get_llm() -> DeepSeekProvider:
+    """返回全局共享的 DeepSeekProvider 单例（复用 httpx 连接池）。"""
+    global _llm_instance
+    if _llm_instance is None:
+        from app.config import settings
+
+        _llm_instance = DeepSeekProvider(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+        )
+    return _llm_instance
