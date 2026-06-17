@@ -147,6 +147,26 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     }
   }
 
+  /// Inject an assistant message into the chat (used when spending triggers a
+  /// chat reaction — the backend delivers it to the same conversation and we
+  /// need to show it in the local message list without a full reload).
+  void injectSpendingReaction(String conversationId, String content) {
+    // Adopt the conversation if we don't have one yet (first interaction).
+    if (_conversationId == null) {
+      _conversationId = conversationId;
+    }
+    // Only inject if it belongs to the same conversation we're viewing.
+    if (_conversationId != conversationId) return;
+
+    final msg = ChatMessage(
+      id: _uuid.v4(),
+      role: 'assistant',
+      content: content,
+      createdAt: DateTime.now(),
+    );
+    state = [...state, msg];
+  }
+
   void clearChat() {
     state = [];
     _conversationId = null;

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme.dart';
+import '../models/spending.dart';
 import '../providers/chat_provider.dart';
 import '../screens/chat_screen.dart';
 import '../screens/goals_screen.dart';
@@ -31,9 +32,9 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
       body: IndexedStack(index: _index, children: _screens),
       floatingActionButton: _index == 0
           ? FloatingActionButton(
-              onPressed: () {
+              onPressed: () async {
                 final convId = ref.read(chatProvider.notifier).conversationId;
-                showModalBottomSheet(
+                final result = await showModalBottomSheet<Spending>(
                   context: context,
                   isScrollControlled: true,
                   shape: const RoundedRectangleBorder(
@@ -41,6 +42,15 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
                   ),
                   builder: (_) => SpendingEntrySheet(conversationId: convId),
                 );
+                if (result != null &&
+                    result.chatReaction != null &&
+                    result.chatReaction!.isNotEmpty &&
+                    result.conversationId != null) {
+                  ref.read(chatProvider.notifier).injectSpendingReaction(
+                        result.conversationId!,
+                        result.chatReaction!,
+                      );
+                }
               },
               backgroundColor: AppTheme.primaryGradientStart,
               child: const Icon(Icons.receipt_long, color: Colors.white),
