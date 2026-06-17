@@ -7,12 +7,13 @@ from app.routes import chat, health, goals, spendings, memes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: verify DB connection
+    # Startup: verify DB connection + auto-create tables
     try:
-        from app.models.database import engine
+        from app.models.database import engine, Base
         from sqlalchemy import text
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
+            await conn.run_sync(Base.metadata.create_all)
     except ImportError:
         pass
     except Exception:
