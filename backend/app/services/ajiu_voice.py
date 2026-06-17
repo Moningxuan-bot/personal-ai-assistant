@@ -221,7 +221,6 @@ class AjiuVoiceService:
         """事件类型 → 渲染器映射。"""
         renderers = {
             AjiuEventType.SPENDING_REACTION: self._render_spending_reaction,
-            AjiuEventType.SPENDING_CHAT_REACTION: self._render_spending_chat_reaction,
             AjiuEventType.SPENDING_MONTHLY_COMMENT: self._render_spending_monthly,
         }
         if event_type in renderers:
@@ -232,7 +231,6 @@ class AjiuVoiceService:
         """LLM 不可用时的兜底模板。"""
         fallbacks = {
             AjiuEventType.SPENDING_REACTION: self._default_reaction,
-            AjiuEventType.SPENDING_CHAT_REACTION: self._default_chat_reaction,
             AjiuEventType.SPENDING_MONTHLY_COMMENT: self._default_monthly_comment,
         }
         if event.event_type in fallbacks:
@@ -250,29 +248,29 @@ class AjiuVoiceService:
 
     # ---- 消费事件渲染 ----
 
-    # 记账场景的硬禁止词和风格约束，追加在场景 prompt 末尾
+    # 记账确认的硬约束。所有记账反应统一走这里——短确认，不写小作文。
     _SPENDING_STYLE_RULES = (
         "## 铁律——违反一条就不是阿玖\n\n"
         "### 绝对禁止词（出现即失败）：\n"
         "您、宝贝、亲爱的、主人、算笔账、储蓄、账户、投资、年化、联名、VIP、"
-        "肺癌、死亡、折寿、减寿、短命、救命、你配吗、建议您、消费流水、确认收到、已记录\n\n"
-        "### 必须做到：\n"
-        "1. 必须包含「记下了」「行吧」「知道了」「嗯记了」中的至少一个\n"
-        "2. 用「你」不用「您」\n"
-        "3. 口语化短句，像微信消息不像作文。别堆反问句\n"
-        "4. 念叨完收住，别升级成威胁和审判\n"
-        "5. 别用脑洞比喻——「肺腌入味」「烟草公司冲业绩」「血管跑马拉松」都不是阿玖。你是伴伴，不是段子手\n\n"
+        "肺癌、死亡、折寿、减寿、短命、救命、你配吗、建议您、消费流水、确认收到、已记录、"
+        "肺、奖励、老猫、奶茶\n\n"
+        "### 格式硬约束：\n"
+        "1. 最多 2 句，总共不超过 80 字\n"
+        "2. 必须包含确认词：「记下了」「行吧」「知道了」「嗯记了」至少一个\n"
+        "3. 用「你」不用「您」。口语化短句\n"
+        "4. 这不是聊天、不是说教、不是写段子——就是记账确认，带一点阿玖味道\n\n"
         "### 反面教材（永远别这么写）：\n"
         "❌ 我真想给您额头贴个联名VIP贴纸\n"
         "❌ 咱算笔账：一天一包20，一年7300\n"
         "❌ 建议您把这钱存进储蓄账户\n"
         "❌ 我每天发你张肺癌警示图\n"
-        "❌ 第7条烟酒消费了宝贝\n"
-        "❌ 你是想把肺腌入味还是想给烟草公司冲业绩\n\n"
-        "### 正确范例（这才是你）：\n"
-        "✅ 又买烟了。这个月第5次了……行吧，我记下了。\n"
-        "✅ 啧，又抽烟。上次不是说要戒吗？算了，你自己看着办，我记了。\n"
-        "✅ 烟酒花了88。不是我说你……行吧，记下了，月底自己看账单。\n"
+        "❌ 这频率你肺在喊救命\n"
+        "❌ 你是想把肺腌入味还是给烟草公司冲业绩\n\n"
+        "### 正确范例：\n"
+        "✅ 又买烟了。行吧，记下了。\n"
+        "✅ 啧，又抽。上次不是说要戒吗？算了，记了。\n"
+        "✅ 烟酒88。这个月第5次了……知道了，月底自己看。\n"
     )
 
     async def _render_spending_reaction(self, event: VoiceEvent) -> str:
@@ -293,33 +291,6 @@ class AjiuVoiceService:
         messages = [ChatMessage(role="system", content=system)]
         text = (await self.llm.chat(messages, stream=False)).strip()
         return text or self._default_reaction(p)
-
-    async def _render_spending_chat_reaction(self, event: VoiceEvent) -> str:
-        """聊天级消费反应（3-5 句，注入到对话中）。"""
-        p = event.payload
-        stats = p.get("stats", {})
-        risk_level = p.get("risk_level", "low")
-
-        intensity_hints = {
-            "high": "这笔消费触发了高危关注（烟酒/高频/大额）。可以念叨、可以叹气、可以翻旧账。但不要审判。",
-            "medium": "这笔消费值得注意。随口念叨一下就行。",
-            "low": "",
-        }
-
-        scene = (
-            f"用户在聊天里记了一笔消费：{p['category']} ¥{p['amount']:.0f}"
-            f"{'，备注：' + p['note'] if p.get('note') else ''}\n"
-            f"（当月同类 {stats.get('same_category_count_month', 0)} 次"
-            f" / 本月累计 ¥{stats.get('monthly_total', 0):.0f}"
-            f" / 24h 同类 {stats.get('same_category_count_24h', 0)} 次）\n\n"
-            f"自然地聊这件事，3-5 句。{intensity_hints.get(risk_level, '')}\n\n"
-            + self._SPENDING_STYLE_RULES
-        )
-
-        system = self._build_system_prompt_for_event(event, scene)
-        messages = [ChatMessage(role="system", content=system)]
-        text = (await self.llm.chat(messages, stream=False)).strip()
-        return text or self._default_chat_reaction(p)
 
     async def _render_spending_monthly(self, event: VoiceEvent) -> str:
         """月度消费点评（2-3 句）。"""
@@ -356,26 +327,6 @@ class AjiuVoiceService:
             "其他": f"记下了，{amount:.0f}元。",
         }
         return templates.get(category, f"记下了。")
-
-    @staticmethod
-    def _default_chat_reaction(payload: dict) -> str:
-        category = payload.get("category", "其他")
-        amount = payload.get("amount", 0)
-        templates = {
-            "烟酒": (
-                f"又买烟酒花了{amount:.0f}块……上个月你在这上面花的钱都快能买Switch了。"
-                f"不是说不买了嘛？算了，我记下了，你自己看着办。"
-            ),
-            "购物": (
-                f"买了{amount:.0f}。不过你最近买东西有点频繁哦，"
-                f"要不要看看这个月账单？"
-            ),
-            "娱乐": f"{amount:.0f}块娱乐消费。玩得开心就好，不过别忘了正事。",
-            "餐饮": f"又吃了{amount:.0f}。吃好喝好，别老吃外卖。",
-            "交通": f"出行花了{amount:.0f}。记下了。",
-            "其他": f"花了{amount:.0f}，记上啦。不过这笔是什么？说清楚点。",
-        }
-        return templates.get(category, f"记下了{amount:.0f}元。记得看看这个月花多少了。")
 
     @staticmethod
     def _default_monthly_comment(payload: dict) -> str:

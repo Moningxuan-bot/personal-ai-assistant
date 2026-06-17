@@ -25,19 +25,24 @@ async def test_create_spending_with_reaction(db_session):
 
 @pytest.mark.anyio
 async def test_cigarette_triggers_chat():
-    """烟酒类应触发聊天级反应。"""
+    """烟酒类应触发聊天反应（短确认，≤80 字）。"""
     mock_llm = AsyncMock(spec=LLMProvider)
     mock_llm.chat.side_effect = [
         json.dumps({"needs_chat": True, "risk_level": "high", "risk_reason": "smoking_frequent"}),
-        "又买烟？行吧。",
-        "这个月第N次了。你的肺不是我的，但我在意。记下了。",
+        "又买烟了。行吧，记下了。",
     ]
     svc = SpendingService(None, mock_llm)
     r = await svc._judge_spending(25, "烟酒", "买烟",
         {"same_category_count_24h":2,"same_category_count_month":5,"same_category_total":125,"monthly_total":2000})
     assert r["needs_chat"] is True
-    assert len(r["chat_reaction"]) > 10
-    assert "肺" in r["chat_reaction"]
+    assert len(r["chat_reaction"]) > 0
+    assert len(r["chat_reaction"]) <= 80
+    # 禁止词检查
+    banned = ["您", "宝贝", "肺", "救命", "储蓄", "联名", "VIP", "算笔账", "肺癌"]
+    for w in banned:
+        assert w not in r["chat_reaction"], f"禁止词「{w}」出现在回复中"
+    # 必须有确认词
+    assert any(w in r["chat_reaction"] for w in ("记下", "记了", "行吧", "知道了", "记住"))
 
 
 @pytest.mark.anyio
@@ -160,16 +165,16 @@ async def test_chat_reaction_with_conversation_id(db_session):
     await db_session.commit()
 
     mock_llm = AsyncMock(spec=LLMProvider)
-    # side_effect: 判定 → reaction 文本 → chat_reaction 文本
+    # side_effect: 判定 → reaction（同时也是 chat_reaction）
     mock_llm.chat.side_effect = [
         json.dumps({"needs_chat": True, "risk_level": "high", "risk_reason": "smoking_frequent"}),
-        "又抽烟？行吧。",
-        "第N根了吧。你的肺不是我的，但我在意。记下了。",
+        "又抽烟了。行吧，记下了。",
     ]
     svc = SpendingService(db_session, mock_llm)
     r = await svc.create_spending(30, "烟酒", "买烟", conv.id)
 
     assert r["chat_reaction"] is not None
+    assert len(r["chat_reaction"]) <= 80
     assert r["chat_delivered"] is True
     # 确认 assistant message 已写入
     from sqlalchemy import select
@@ -177,7 +182,7 @@ async def test_chat_reaction_with_conversation_id(db_session):
     stmt = select(Message).where(Message.conversation_id == conv.id, Message.role == "assistant")
     msgs = (await db_session.execute(stmt)).scalars().all()
     assert len(msgs) == 1
-    assert "第N根" in msgs[0].content
+    assert "记下" in msgs[0].content
 
 
 @pytest.mark.anyio

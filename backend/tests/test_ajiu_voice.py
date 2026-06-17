@@ -112,17 +112,14 @@ async def test_render_spending_reaction():
 
 
 @pytest.mark.anyio
-async def test_render_spending_chat_reaction():
-    """spending_chat_reaction 事件应渲染为较长的阿玖语气文本。"""
+async def test_render_spending_reaction_short_and_safe():
+    """记账反应应短且不含禁止词。"""
     mock_llm = AsyncMock(spec=LLMProvider)
-    mock_llm.chat.return_value = (
-        "又买烟了？这个月第5次了。不是说不买了嘛。"
-        "算了，我记下了，你自己看着办。"
-    )
+    mock_llm.chat.return_value = "又买烟了。行吧，记下了。"
     voice = AjiuVoiceService(mock_llm)
 
     text = await voice.render_event(VoiceEvent(
-        event_type=AjiuEventType.SPENDING_CHAT_REACTION,
+        event_type=AjiuEventType.SPENDING_REACTION,
         payload={
             "amount": 25, "category": "烟酒", "note": "买烟",
             "stats": {"same_category_count_24h": 2, "same_category_count_month": 5,
@@ -130,8 +127,11 @@ async def test_render_spending_chat_reaction():
             "risk_level": "high", "risk_reason": "smoking_frequent",
         },
     ))
-    assert "烟" in text or "记下" in text
-    assert len(text) > 10
+    assert len(text) <= 80, f"超过 80 字: {len(text)} 字"
+    assert any(w in text for w in ("记下", "记了", "行吧", "知道了", "记住"))
+    banned = ["您", "宝贝", "肺", "救命", "储蓄", "联名", "VIP", "算笔账", "肺癌"]
+    for w in banned:
+        assert w not in text, f"禁止词「{w}」出现在回复中"
 
 
 @pytest.mark.anyio
@@ -177,16 +177,6 @@ async def test_render_empty_llm_response_uses_fallback():
     ))
     assert len(text) > 0
     assert "20" in text or "记" in text
-
-
-@pytest.mark.anyio
-async def test_default_chat_reaction_by_category():
-    """默认 chat_reaction 模板按分类返回对应文本。"""
-    voice = AjiuVoiceService(AsyncMock(spec=LLMProvider))
-
-    for cat in ("烟酒", "购物", "娱乐", "餐饮", "交通", "其他"):
-        text = voice._default_chat_reaction({"category": cat, "amount": 50})
-        assert len(text) > 0, f"分类 {cat} 缺少默认模板"
 
 
 @pytest.mark.anyio

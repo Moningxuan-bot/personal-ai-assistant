@@ -151,17 +151,14 @@ risk_level=high 条件：烟酒类 且 (24h≥3次 或 金额>月均2倍)"""
         }
 
         # ---- 第三步：委托 AjiuVoiceService 生成阿玖语气文本 ----
+        # 只有一种 reaction——短确认（≤80字，≤2句）。不再区分 card/chat 级别。
         reaction = await self.voice.render_event(VoiceEvent(
             event_type=AjiuEventType.SPENDING_REACTION,
             payload=event_payload,
         ))
 
-        chat_reaction = ""
-        if needs_chat:
-            chat_reaction = await self.voice.render_event(VoiceEvent(
-                event_type=AjiuEventType.SPENDING_CHAT_REACTION,
-                payload=event_payload,
-            ))
+        # needs_chat 时，用同一个短 reaction 作为聊天注入文字
+        chat_reaction = reaction if needs_chat else ""
 
         return {
             "reaction": reaction,
