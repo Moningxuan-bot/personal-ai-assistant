@@ -14,7 +14,7 @@ async def test_create_spending_with_reaction(db_session):
     # side_effect: 第 1 次调用=判定, 第 2 次=reaction 文本 (via voice)
     mock_llm.chat.side_effect = [
         json.dumps({"needs_chat": False, "risk_level": "low", "risk_reason": ""}),
-        "又吃麻辣烫？",
+        "又吃麻辣烫？行吧，记下了。",
     ]
     svc = SpendingService(db_session, mock_llm)
     r = await svc.create_spending(35.5, "餐饮", "麻辣烫", None)
@@ -29,8 +29,8 @@ async def test_cigarette_triggers_chat():
     mock_llm = AsyncMock(spec=LLMProvider)
     mock_llm.chat.side_effect = [
         json.dumps({"needs_chat": True, "risk_level": "high", "risk_reason": "smoking_frequent"}),
-        "又买烟？",
-        "这个月第N次了。你的肺不是我的，但我在意。",
+        "又买烟？行吧。",
+        "这个月第N次了。你的肺不是我的，但我在意。记下了。",
     ]
     svc = SpendingService(None, mock_llm)
     r = await svc._judge_spending(25, "烟酒", "买烟",
@@ -163,8 +163,8 @@ async def test_chat_reaction_with_conversation_id(db_session):
     # side_effect: 判定 → reaction 文本 → chat_reaction 文本
     mock_llm.chat.side_effect = [
         json.dumps({"needs_chat": True, "risk_level": "high", "risk_reason": "smoking_frequent"}),
-        "又抽烟？",
-        "第N根了吧。你的肺不是我的，但我在意。",
+        "又抽烟？行吧。",
+        "第N根了吧。你的肺不是我的，但我在意。记下了。",
     ]
     svc = SpendingService(db_session, mock_llm)
     r = await svc.create_spending(30, "烟酒", "买烟", conv.id)

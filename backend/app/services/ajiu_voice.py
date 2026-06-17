@@ -99,18 +99,39 @@ class OutputValidator:
     """
 
     BANNED_PHRASES: set[str] = {
+        # 客服语气
         "很高兴为您服务",
         "请问还有什么可以帮您",
         "请问有什么需要帮助的吗",
         "有什么可以帮助您的",
+        "您的问题已记录",
+        "已收到您的请求",
+        # 非阿玖自称
         "我是AI",
         "我是人工智能",
         "我是AI助手",
         "作为AI",
         "作为一个人工智能",
-        "您的问题已记录",
-        "已收到您的请求",
+        # 记账场景禁词
+        "算笔账",
+        "储蓄账户",
+        "存进储蓄",
+        "联名",
+        "VIP",
+        "建议您",
+        "已记录您的消费",
+        "消费流水号",
+        "确认收到",
     }
+
+    # 额外检查子串：包含以下任意词即标记
+    BANNED_SUBSTRINGS: list[str] = [
+        "您", "算笔账", "储蓄", "联名", "VIP",
+        "建议您", "消费流水", "已记录",
+        "宝贝", "亲爱的", "主人",
+        "肺癌", "折寿", "减寿", "短命",
+        "你配吗",
+    ]
 
     MAX_LENGTH = 600
     MIN_LENGTH = 2
@@ -120,10 +141,15 @@ class OutputValidator:
     def validate(cls, text: str, event_type: AjiuEventType | None = None) -> ValidationResult:
         issues: list[str] = []
 
-        # 1. 禁止用词（客服语气 / 非阿玖式自称）
+        # 1. 禁止用词（客服语气 / 非阿玖式自称 / 记账场景禁词）
         for phrase in cls.BANNED_PHRASES:
             if phrase in text:
                 issues.append(f"包含客服/非阿玖语气: 「{phrase}」")
+
+        # 1b. 禁止子串（更短的关键词）
+        for sub in cls.BANNED_SUBSTRINGS:
+            if sub in text:
+                issues.append(f"包含禁止词: 「{sub}」")
 
         # 2. 长度限制
         if len(text) > cls.MAX_LENGTH:
@@ -144,7 +170,7 @@ class OutputValidator:
         # 5. 记账事件专属规则
         if event_type in (AjiuEventType.SPENDING_REACTION, AjiuEventType.SPENDING_CHAT_REACTION):
             # 必须包含记账确认词
-            has_confirm = any(w in text for w in ("记下", "记上", "记了", "知道了", "行吧", "行了", "好嘞"))
+            has_confirm = any(w in text for w in ("记下", "记上", "记了", "记住", "知道了", "行吧", "行了", "好嘞"))
             if not has_confirm:
                 issues.append("记账回复缺少确认词（应含：记下了/行吧/知道了 等）")
 
@@ -177,15 +203,17 @@ class AjiuVoiceService:
             text = await renderer(event)
         except Exception:
             logger.warning(f"LLM render failed for {event.event_type}, using fallback", exc_info=True)
-            text = self._get_fallback(event)
+            return self._get_fallback(event)
 
-        # 输出校验（第一阶段——仅日志，不阻断）
+        # 输出校验
         result = self.validator.validate(text, event.event_type)
         if not result.passed:
-            logger.info(
-                f"Validation issues for {event.event_type.value}: "
-                f"{'; '.join(result.issues)} | text={text[:100]}..."
+            logger.warning(
+                f"Validation FAILED for {event.event_type.value}: "
+                f"{'; '.join(result.issues)} | text={text[:120]}..."
+                f" → falling back to safe template"
             )
+            return self._get_fallback(event)
 
         return text
 
@@ -222,21 +250,43 @@ class AjiuVoiceService:
 
     # ---- 消费事件渲染 ----
 
+    # 记账场景的硬禁止词和风格约束，追加在场景 prompt 末尾
+    _SPENDING_STYLE_RULES = (
+        "## 铁律——违反一条就不是阿玖\n\n"
+        "### 绝对禁止词（出现即失败）：\n"
+        "您、宝贝、亲爱的、主人、算笔账、储蓄、账户、投资、年化、联名、VIP、"
+        "肺癌、死亡、折寿、减寿、短命、救命、你配吗、建议您、消费流水、确认收到、已记录\n\n"
+        "### 必须做到：\n"
+        "1. 必须包含「记下了」「行吧」「知道了」「嗯记了」中的至少一个\n"
+        "2. 用「你」不用「您」\n"
+        "3. 口语化短句，像微信消息不像作文。别堆反问句\n"
+        "4. 念叨完收住，别升级成威胁和审判\n"
+        "5. 别用脑洞比喻——「肺腌入味」「烟草公司冲业绩」「血管跑马拉松」都不是阿玖。你是伴伴，不是段子手\n\n"
+        "### 反面教材（永远别这么写）：\n"
+        "❌ 我真想给您额头贴个联名VIP贴纸\n"
+        "❌ 咱算笔账：一天一包20，一年7300\n"
+        "❌ 建议您把这钱存进储蓄账户\n"
+        "❌ 我每天发你张肺癌警示图\n"
+        "❌ 第7条烟酒消费了宝贝\n"
+        "❌ 你是想把肺腌入味还是想给烟草公司冲业绩\n\n"
+        "### 正确范例（这才是你）：\n"
+        "✅ 又买烟了。这个月第5次了……行吧，我记下了。\n"
+        "✅ 啧，又抽烟。上次不是说要戒吗？算了，你自己看着办，我记了。\n"
+        "✅ 烟酒花了88。不是我说你……行吧，记下了，月底自己看账单。\n"
+    )
+
     async def _render_spending_reaction(self, event: VoiceEvent) -> str:
         """卡片级消费吐槽（1-2 句）。"""
         p = event.payload
         stats = p.get("stats", {})
 
         scene = (
-            f"## 当前场景：用户刚记了一笔消费\n\n"
-            f"用阿玖的语气给一个简短吐槽（1-2 句，不超过 80 字）。"
-            f"这是卡片级反应，要短而精，不需要长篇大论。\n\n"
-            f"消费信息：{p['category']} ¥{p['amount']:.0f}"
+            f"用户刚记了一笔消费：{p['category']} ¥{p['amount']:.0f}"
             f"{'，备注：' + p['note'] if p.get('note') else ''}\n"
-            f"背景：当月同类 {stats.get('same_category_count_month', 0)} 次"
-            f" / ¥{stats.get('same_category_total', 0):.0f}"
-            f" | 本月累计 ¥{stats.get('monthly_total', 0):.0f}"
-            f" | 24h 同类 {stats.get('same_category_count_24h', 0)} 次"
+            f"（当月同类 {stats.get('same_category_count_month', 0)} 次"
+            f" / 本月累计 ¥{stats.get('monthly_total', 0):.0f}）\n\n"
+            f"给一个简短吐槽，1-2 句，不超过 80 字，必须包含确认词。\n"
+            + self._SPENDING_STYLE_RULES
         )
 
         system = self._build_system_prompt_for_event(event, scene)
@@ -249,28 +299,21 @@ class AjiuVoiceService:
         p = event.payload
         stats = p.get("stats", {})
         risk_level = p.get("risk_level", "low")
-        risk_reason = p.get("risk_reason", "")
 
-        # 根据风险等级调整语气强度提示
         intensity_hints = {
-            "high": "这笔消费触发了高危关注（烟酒/高频/大额），语气可以更重一点，"
-                    "带上担心和念叨。但不超过 5 句，不要审判和说教。",
-            "medium": "这笔消费值得注意，随口念叨一下。",
-            "low": "这笔消费很普通，自然地带过即可。",
+            "high": "这笔消费触发了高危关注（烟酒/高频/大额）。可以念叨、可以叹气、可以翻旧账。但不要审判。",
+            "medium": "这笔消费值得注意。随口念叨一下就行。",
+            "low": "",
         }
 
         scene = (
-            f"## 当前场景：用户记了一笔消费，你需要在聊天里回应\n\n"
-            f"用阿玖的语气自然地聊这件事（3-5 句）。\n"
-            f"不要像系统通知，要像朋友看到你花钱后念叨两句。\n"
-            f"{intensity_hints.get(risk_level, intensity_hints['low'])}\n\n"
-            f"消费信息：{p['category']} ¥{p['amount']:.0f}"
+            f"用户在聊天里记了一笔消费：{p['category']} ¥{p['amount']:.0f}"
             f"{'，备注：' + p['note'] if p.get('note') else ''}\n"
-            f"关注原因：{risk_reason or '无特殊原因'}\n"
-            f"背景：当月同类 {stats.get('same_category_count_month', 0)} 次"
-            f" / ¥{stats.get('same_category_total', 0):.0f}"
-            f" | 本月累计 ¥{stats.get('monthly_total', 0):.0f}"
-            f" | 24h 同类 {stats.get('same_category_count_24h', 0)} 次"
+            f"（当月同类 {stats.get('same_category_count_month', 0)} 次"
+            f" / 本月累计 ¥{stats.get('monthly_total', 0):.0f}"
+            f" / 24h 同类 {stats.get('same_category_count_24h', 0)} 次）\n\n"
+            f"自然地聊这件事，3-5 句。{intensity_hints.get(risk_level, '')}\n\n"
+            + self._SPENDING_STYLE_RULES
         )
 
         system = self._build_system_prompt_for_event(event, scene)
