@@ -396,41 +396,38 @@ class ChatService:
         # 模式：默认闲聊
         mode = "casual"
 
-        # 获取记忆上下文
-        memory_context = ""
-        try:
-            memories = await self.memory.retrieve_relevant(event_desc)
-            memory_context = "\n".join(f"[{m.category}] {m.content}" for m in memories)
-        except Exception:
-            pass
+        # 即时记账反应：用固定模板，不调 LLM。
+        # DeepSeek 在烟酒场景下容易走向"健康警告/建议/分析"——这不是阿玖的脱口而出。
+        # 模板是稳定、可控的阿玖第一反应。真正的聊天对话走 ChatService.chat()。
+        templates = {
+            "烟酒": [
+                f"又买烟酒花了{p['amount']:.0f}块。行吧，我记下了。",
+                f"啧，又抽烟。{p['amount']:.0f}块。记了，你自己看着办。",
+                f"烟酒{p['amount']:.0f}。这个月第几次了？算了，记下了。",
+            ],
+            "购物": [
+                f"买了{p['amount']:.0f}。记下了。",
+                f"购物{p['amount']:.0f}块。开心就好，我记了。",
+            ],
+            "娱乐": [
+                f"娱乐花了{p['amount']:.0f}。玩得开心，记下了。",
+                f"{p['amount']:.0f}块娱乐。知道了，别玩太晚。",
+            ],
+            "餐饮": [
+                f"又吃了{p['amount']:.0f}。行吧，记下了。",
+                f"餐饮{p['amount']:.0f}。吃好喝好，记了。",
+            ],
+            "交通": [
+                f"出行{p['amount']:.0f}块。记下了。",
+                f"交通花了{p['amount']:.0f}。知道了。",
+            ],
+        }
+        default_templates = [f"花了{p['amount']:.0f}。记下了。", f"{p['amount']:.0f}块。行吧，记了。"]
 
-        # 获取消费上下文
-        from app.services.spending import SpendingService
-        spending_svc = SpendingService(self.db, self.llm)
-        spending_context = await spending_svc.get_recent_context(hours=24, limit=5)
-
-        # 获取最近消息
-        recent = await self._get_recent_messages(conv.id, limit=10)
-
-        # 组装完整 system prompt
-        system_prompt = self._build_system_prompt(
-            mode, memory_context, spending_context, "", ""
-        )
-
-        # 追加事件
-        system_prompt += (
-            f"\n\n## 刚刚发生了一件事（你需要自然回应）\n{event_desc}\n\n"
-            f"你看到了这笔消费。你不是系统通知，你是阿玖——用你的方式自然地说一句。"
-            f"不要长篇大论，1-2 句，像朋友随口念叨。"
-        )
-
-        # 构建 LLM messages
-        llm_messages = [ChatMessage(role="system", content=system_prompt)]
-        for msg in recent:
-            llm_messages.append(ChatMessage(role=msg.role, content=msg.content))
-
-        # 非流式生成
-        response_text = (await self.llm.chat(llm_messages, stream=False)).strip()
+        cat_templates = templates.get(p["category"], default_templates)
+        # 根据 24h 次数选模板变体
+        idx = min(p.get("same_category_count_24h", 0), len(cat_templates) - 1)
+        response_text = cat_templates[idx]
 
         # 保存 assistant message
         assistant_msg = Message(
