@@ -3,20 +3,18 @@
 
 功能：
 - 从 X-Request-ID 头读取或生成 request_id
-- 设置 ContextVar 供下游代码使用
+- 设置 ContextVar 供下游代码使用（finally 中 reset，防止残留）
 - 在响应头中返回 X-Request-ID（前端可引用）
-- 记录请求耗时（SSE 长连接例外：只记开始和结束事件）
+- 记录请求耗时（SSE 长连接例外：仅成功时记 start，结束由 ChatService 内记）
 - 不记录请求体（隐私保护）
 
 注意：必须在 AuthMiddleware 之后注册，这样才能拿到通过认证的请求。
 """
-import json
 import logging
 import time
 import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
-from app.request_context import set_request_id, get_request_id
+from app.request_context import request_id, set_request_id
 
 logger = logging.getLogger("ajiur.http")
 
@@ -38,41 +36,74 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # ---- request_id ----
         rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
-        set_request_id(rid)
+        token = set_request_id(rid)
 
-        # ---- 跳过噪音路径 ----
-        if path in SKIP_LOG_PATHS:
-            return await call_next(request)
+        try:
+            # ---- 跳过噪音路径 ----
+            if path in SKIP_LOG_PATHS:
+                response = await call_next(request)
+                return response
 
-        start_ms = time.time()
+            start_ms = time.time()
 
-        if _is_sse_path(path):
-            # SSE 长连接：只记开始，不记结束（结束由 ChatService 内记）
-            logger.info(
-                "SSE stream started",
-                extra={"extra_fields": {"method": request.method, "path": path}},
-            )
-            response = await call_next(request)
+            if _is_sse_path(path):
+                # SSE: 先让 auth 等中间件跑完，只有 2xx 才记 start
+                response = await call_next(request)
+                if response.status_code < 400:
+                    logger.info(
+                        "SSE stream started",
+                        extra={"extra_fields": {"method": request.method, "path": path}},
+                    )
+                else:
+                    # 401/403 等按普通请求记录
+                    elapsed_ms = round((time.time() - start_ms) * 1000)
+                    logger.warning(
+                        f"{request.method} {path} → {response.status_code} {elapsed_ms}ms (SSE rejected)",
+                        extra={
+                            "extra_fields": {
+                                "method": request.method,
+                                "path": path,
+                                "status": response.status_code,
+                                "elapsed_ms": elapsed_ms,
+                            },
+                        },
+                    )
+                response.headers["X-Request-ID"] = rid
+                return response
+
+            # ---- 普通 HTTP 请求 ----
+            try:
+                response = await call_next(request)
+                status = response.status_code
+                error_type = None
+            except Exception as e:
+                status = 500
+                error_type = type(e).__name__
+                raise
+            finally:
+                elapsed_ms = round((time.time() - start_ms) * 1000)
+                extra_fields = {
+                    "method": request.method,
+                    "path": path,
+                    "status": status,
+                    "elapsed_ms": elapsed_ms,
+                }
+                if error_type:
+                    extra_fields["error_type"] = error_type
+                    logger.error(
+                        f"{request.method} {path} → request_failed {elapsed_ms}ms error={error_type}",
+                        extra={"extra_fields": extra_fields},
+                    )
+                else:
+                    level = logging.WARNING if status >= 500 else logging.INFO
+                    logger.log(
+                        level,
+                        f"{request.method} {path} → {status} {elapsed_ms}ms",
+                        extra={"extra_fields": extra_fields},
+                    )
+
             response.headers["X-Request-ID"] = rid
             return response
 
-        # ---- 普通 HTTP 请求 ----
-        response = await call_next(request)
-
-        elapsed_ms = round((time.time() - start_ms) * 1000)
-        # 提取 extra_fields，确保合并进去
-        extra_fields = {
-            "method": request.method,
-            "path": path,
-            "status": response.status_code,
-            "elapsed_ms": elapsed_ms,
-        }
-        level = logging.WARNING if response.status_code >= 500 else logging.INFO
-        logger.log(
-            level,
-            f"{request.method} {path} → {response.status_code} {elapsed_ms}ms",
-            extra={"extra_fields": extra_fields},
-        )
-
-        response.headers["X-Request-ID"] = rid
-        return response
+        finally:
+            request_id.reset(token)

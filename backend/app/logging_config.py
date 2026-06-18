@@ -76,11 +76,12 @@ class HumanFormatter(logging.Formatter):
 
 
 def setup_logging() -> None:
-    """配置全局日志系统。调用一次，幂等。"""
+    """配置全局日志系统。调用一次，幂等（用 _ajiur_configured 标记判断）。"""
     root = logging.getLogger()
     # 防止重复配置（uvicorn reload 时模块重新执行）
-    if root.handlers:
+    if getattr(root, "_ajiur_configured", False):
         return
+    root._ajiur_configured = True
 
     is_dev = settings.app_env == "development"
 
