@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import get_db
@@ -8,6 +9,8 @@ from app.services.memory import MemoryService
 from app.services.ajiu_voice import AjiuVoiceService
 from app.providers.llm import get_llm
 from app.providers.embedding import embed_provider
+
+logger = logging.getLogger("ajiur.route.spending")
 
 router = APIRouter(tags=["spendings"], prefix="/spendings")
 
@@ -51,8 +54,11 @@ async def create_spending(
             result["chat_reaction"] = chat_reaction
             result["chat_delivered"] = True
         except Exception:
-            # LLM 故障不阻塞记账
-            pass
+            # LLM 故障不阻塞记账，但记录日志
+            logger.warning(
+                "Spending chat reaction failed, spending saved without chat reply",
+                exc_info=True,
+            )
 
     # 清理内部字段（不在 SpendingResponse schema 中）
     result.pop("needs_chat", None)

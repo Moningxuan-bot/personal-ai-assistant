@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import AsyncIterator
@@ -12,6 +13,8 @@ from app.services.memory import MemoryService
 from app.services.coach import CoachEngine
 from app.providers.llm import LLMProvider, ChatMessage
 from app.prompts.ajiu import AJIU_SYSTEM_PROMPT, CONTRADICTION_PROMPT, MEME_PROMPT, MODE_PROMPTS
+
+logger = logging.getLogger("ajiur.chat")
 
 # 教练模式触发词
 COACH_TRIGGERS = [
@@ -127,6 +130,22 @@ class ChatService:
 
         # 2. Detect mode (consider existing coach state)
         mode = self._detect_mode(user_message, conv.coach_state)
+
+        msg_len = len(user_message)
+        is_first = await self._count_messages(conv.id) == 0
+        logger.info(
+            f"chat_start mode={mode} conv_id={conv.id} msg_len={msg_len} "
+            f"first_turn={is_first}",
+            extra={
+                "extra_fields": {
+                    "chat_mode": mode,
+                    "conv_id": str(conv.id),
+                    "chat_msg_len": msg_len,
+                    "chat_first_turn": is_first,
+                },
+            },
+        )
+
         yield {
             "type": "meta",
             "conversation_id": str(conv.id),
@@ -172,7 +191,11 @@ class ChatService:
                 )
                 contradiction_prompt = CONTRADICTION_PROMPT.format(count=max_count)
         except Exception:
-            pass
+            logger.warning(
+                "Memory extraction failed, continuing chat without new memories",
+                exc_info=True,
+                extra={"extra_fields": {"conv_id": str(conv.id)}},
+            )
 
         # 4. Retrieve relevant memories
         memories = await self.memory.retrieve_relevant(user_message)
@@ -209,6 +232,7 @@ class ChatService:
 
         # 7. Stream response tokens
         full_response = []
+        first_token_yielded = False
         if contradiction_mockery:
             full_response.append(contradiction_mockery)
             yield {"type": "delta", "content": contradiction_mockery}
@@ -216,6 +240,12 @@ class ChatService:
         stream = await self.llm.chat(llm_messages, stream=True)
 
         async for chunk in stream:
+            if not first_token_yielded:
+                first_token_yielded = True
+                logger.info(
+                    f"chat_first_token conv_id={conv.id}",
+                    extra={"extra_fields": {"conv_id": str(conv.id)}},
+                )
             full_response.append(chunk)
             yield {"type": "delta", "content": chunk}
 
@@ -228,6 +258,16 @@ class ChatService:
         await self.db.commit()
 
         # 9. Signal done
+        resp_len = len(response_text)
+        logger.info(
+            f"chat_done conv_id={conv.id} resp_len={resp_len}",
+            extra={
+                "extra_fields": {
+                    "conv_id": str(conv.id),
+                    "chat_resp_len": resp_len,
+                },
+            },
+        )
         yield {"type": "done"}
 
         # 10. Background indexing
@@ -235,12 +275,18 @@ class ChatService:
             await self.memory.index_message(user_msg)
             await self.memory.index_message(assistant_msg)
         except Exception:
-            pass
+            logger.warning(
+                "Message indexing failed", exc_info=True,
+                extra={"extra_fields": {"conv_id": str(conv.id)}},
+            )
         if not memory_extracted:
             try:
                 await self.memory.extract_and_save_memories(user_msg, self.llm)
             except Exception:
-                pass
+                logger.warning(
+                    "Delayed memory extraction failed", exc_info=True,
+                    extra={"extra_fields": {"conv_id": str(conv.id)}},
+                )
 
     def _build_contradiction_mockery(self, contradiction: dict) -> str:
         """把矛盾检测结果变成阿玖开场吐槽。"""
@@ -262,11 +308,16 @@ class ChatService:
     ) -> AsyncIterator[dict]:
         """处理教练模式消息：可能是回答教练问题，也可能是确认/拒绝计划。"""
         coach_state = conv.coach_state
+        state_step = coach_state.get("step") if coach_state else "init"
 
         # 检测是否是计划确认/拒绝/修改
         if coach_state and coach_state.get("pending_plan"):
             if self._is_confirmation(user_message) and len(user_message.strip()) <= 5:
                 # 明确简短的确认词 → 确认
+                logger.info(
+                    f"coach_plan_confirmed step={state_step} conv_id={conv.id}",
+                    extra={"extra_fields": {"coach_step": state_step, "conv_id": str(conv.id)}},
+                )
                 result = await self.coach.confirm_plan(coach_state, True)
                 await self._save_coach_result(conv, user_msg, result)
                 async for event in self._emit_coach_responses(result):
@@ -274,6 +325,10 @@ class ChatService:
                 return
             elif self._is_rejection(user_message):
                 # 明确的拒绝词 → 重开
+                logger.info(
+                    f"coach_plan_rejected step={state_step} conv_id={conv.id}",
+                    extra={"extra_fields": {"coach_step": state_step, "conv_id": str(conv.id)}},
+                )
                 result = await self.coach.confirm_plan(coach_state, False)
                 await self._save_coach_result(conv, user_msg, result)
                 async for event in self._emit_coach_responses(result):
@@ -281,6 +336,10 @@ class ChatService:
                 return
             else:
                 # 既不是确认也不是拒绝 → 用户的修改意见，让 LLM 修订计划
+                logger.info(
+                    f"coach_plan_revised step={state_step} conv_id={conv.id}",
+                    extra={"extra_fields": {"coach_step": state_step, "conv_id": str(conv.id)}},
+                )
                 result = await self.coach.revise_plan(coach_state, user_message)
                 await self._save_coach_result(conv, user_msg, result)
                 async for event in self._emit_coach_responses(result):
@@ -288,6 +347,16 @@ class ChatService:
                 return
 
         # 正常教练流程
+        logger.info(
+            f"coach_step step={state_step} msg_len={len(user_message)} conv_id={conv.id}",
+            extra={
+                "extra_fields": {
+                    "coach_step": state_step,
+                    "chat_msg_len": len(user_message),
+                    "conv_id": str(conv.id),
+                },
+            },
+        )
         result = await self.coach.process(user_message, coach_state)
         await self._save_coach_result(conv, user_msg, result)
         async for event in self._emit_coach_responses(result):
@@ -322,13 +391,25 @@ class ChatService:
             )
             self.db.add(goal)
             await self.db.commit()
+            logger.info(
+                f"coach_goal_created goal_id={goal.id} title={goal_data['title'][:40]}",
+                extra={
+                    "extra_fields": {
+                        "goal_id": str(goal.id),
+                        "conv_id": str(conv.id),
+                    },
+                },
+            )
 
         # Background indexing
         try:
             await self.memory.index_message(user_msg)
             await self.memory.index_message(assistant_msg)
         except Exception:
-            pass
+            logger.warning(
+                "Coach message indexing failed", exc_info=True,
+                extra={"extra_fields": {"conv_id": str(conv.id)}},
+            )
 
     async def _emit_coach_responses(self, result: dict) -> AsyncIterator[dict]:
         """把教练结果转换为 SSE delta 事件。"""

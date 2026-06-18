@@ -10,10 +10,13 @@
 
 import copy
 import json
+import logging
 import uuid
 from datetime import datetime
 from app.providers.llm import LLMProvider, ChatMessage
 from app.utils import extract_json_from_llm
+
+logger = logging.getLogger("ajiur.coach")
 
 # ============================================================
 # 6 必问项定义
@@ -270,8 +273,13 @@ class CoachEngine:
         try:
             response = await self.llm.chat(messages, stream=False)
             return extract_json_from_llm(response)
-        except (json.JSONDecodeError, Exception):
+        except (json.JSONDecodeError, Exception) as e:
             # LLM 失败时沿用原计划，只把反馈加进描述
+            logger.warning(
+                "Coach plan revision LLM failed, keeping original plan",
+                exc_info=True,
+                extra={"extra_fields": {"coach_error": type(e).__name__}},
+            )
             return {
                 "title": current_plan.get("title", "未命名目标"),
                 "description": current_plan.get("description", "")
@@ -371,8 +379,14 @@ class CoachEngine:
             response = await self.llm.chat(messages, stream=False)
             result = extract_json_from_llm(response)
             return result
-        except (json.JSONDecodeError, Exception):
+        except (json.JSONDecodeError, Exception) as e:
             # LLM 返回非 JSON 时，宽松处理：如果答得不算太短，就放过
+            logger.warning(
+                f"Coach evaluation JSON parse failed, falling back to len-based heuristic "
+                f"answer_len={len(answer.strip())}",
+                exc_info=True,
+                extra={"extra_fields": {"coach_error": type(e).__name__}},
+            )
             if len(answer.strip()) >= 15:
                 return {
                     "pass": True,
@@ -448,8 +462,13 @@ class CoachEngine:
         try:
             response = await self.llm.chat(messages, stream=False)
             return extract_json_from_llm(response)
-        except (json.JSONDecodeError, Exception):
+        except (json.JSONDecodeError, Exception) as e:
             # Fallback: 自己拼一个
+            logger.warning(
+                "Coach plan summary LLM failed, using manual fallback",
+                exc_info=True,
+                extra={"extra_fields": {"coach_error": type(e).__name__}},
+            )
             return {
                 "title": answers.get("goal_picture", "未命名目标"),
                 "description": answers.get("motivation", ""),

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
@@ -5,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.spending import Spending
 from app.providers.llm import LLMProvider
 from app.services.ajiu_voice import AjiuVoiceService, AjiuEventType, VoiceEvent
+
+logger = logging.getLogger("ajiur.spending")
 
 
 class SpendingService:
@@ -43,6 +46,19 @@ class SpendingService:
         self.db.add(spending)
         await self.db.commit()
         await self.db.refresh(spending)
+
+        logger.info(
+            f"spending_created id={spending.id} category={category} "
+            f"amount={amount:.0f} needs_chat={needs_chat}",
+            extra={
+                "extra_fields": {
+                    "spending_id": str(spending.id),
+                    "spending_category": category,
+                    "spending_amount": amount,
+                    "spending_needs_chat": needs_chat,
+                },
+            },
+        )
 
         return {
             **self._to_dict(spending),

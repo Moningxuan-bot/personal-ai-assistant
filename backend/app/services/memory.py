@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 import re
 from datetime import datetime, timezone
@@ -9,6 +10,8 @@ from app.models.message import Message
 from app.models.memory import Memory
 from app.providers.embedding import EmbeddingProvider
 from app.utils import extract_json_from_llm
+
+logger = logging.getLogger("ajiur.memory")
 
 
 class MemoryService:
@@ -209,7 +212,11 @@ class MemoryService:
         response = await llm.chat([prompt], stream=False)
         try:
             data = extract_json_from_llm(response)
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, json.JSONDecodeError) as e:
+            logger.warning(
+                "Contradiction judge returned invalid JSON, defaulting to no contradiction",
+                extra={"extra_fields": {"error_type": type(e).__name__}},
+            )
             return {"contradicts": False}
         if not isinstance(data, dict):
             return {"contradicts": False}

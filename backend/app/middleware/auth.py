@@ -1,6 +1,9 @@
+import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from app.config import settings
+
+logger = logging.getLogger("ajiur.auth")
 
 # 本地开发中不需要认证的路径
 DEV_SKIP_AUTH_PATHS = {
@@ -22,6 +25,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Verify device token in header
         auth_header = request.headers.get("X-Device-Token", "")
         if auth_header != settings.device_secret:
+            logger.warning(
+                f"Auth rejected: {request.method} {request.url.path}",
+                extra={
+                    "extra_fields": {
+                        "method": request.method,
+                        "path": request.url.path,
+                    },
+                },
+            )
             return JSONResponse(
                 status_code=401,
                 content={"error": "Unauthorized: invalid device token"},

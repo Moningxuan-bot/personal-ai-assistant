@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,7 @@ from app.providers.embedding import embed_provider
 from app.config import settings
 
 router = APIRouter(tags=["chat"])
+logger = logging.getLogger("ajiur.route.chat")
 
 # Singleton providers (initialized at import time)
 llm_provider = get_llm()
@@ -47,7 +49,11 @@ async def chat(request: ChatRequest, service: ChatService = Depends(get_chat_ser
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            logger.exception(
+                f"SSE chat stream error: {type(e).__name__}: {e}",
+                extra={"extra_fields": {"error_type": type(e).__name__}},
+            )
+            yield f"data: {json.dumps({'type': 'error', 'message': '阿玖掉线了，稍等我缓一下……'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_stream(),

@@ -2,6 +2,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import AsyncIterator
 import json
+import logging
+import time
+
+logger = logging.getLogger("ajiur.llm")
 
 
 @dataclass
@@ -56,16 +60,65 @@ class DeepSeekProvider(LLMProvider):
             "stream": stream,
         }
         if stream:
-            return self._stream_chat(client, body)
+            return self._stream_chat_instrumented(client, body)
         else:
+            return await self._chat_instrumented(client, body)
+
+    async def _chat_instrumented(self, client, body: dict) -> str:
+        start = time.time()
+        status_code = 0
+        error_type = None
+        try:
             resp = await client.post("/v1/chat/completions", json=body)
+            status_code = resp.status_code
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            result = data["choices"][0]["message"]["content"]
+            return result
+        except Exception as e:
+            error_type = type(e).__name__
+            raise
+        finally:
+            elapsed = round((time.time() - start) * 1000)
+            msg_count = len(body["messages"])
+            logger.info(
+                f"LLM chat: stream=false msgs={msg_count} status={status_code} "
+                f"elapsed={elapsed}ms" + (f" error={error_type}" if error_type else ""),
+                extra={
+                    "extra_fields": {
+                        "llm_model": body["model"],
+                        "llm_stream": False,
+                        "llm_msg_count": msg_count,
+                        "llm_status": status_code,
+                        "llm_elapsed_ms": elapsed,
+                        "llm_error": error_type,
+                    },
+                },
+            )
 
-    def _stream_chat(self, client, body) -> AsyncIterator[str]:
-        async def generate():
+    async def _stream_chat_instrumented(self, client, body) -> AsyncIterator[str]:
+        """流式 LLM 调用 + 埋点（记录 TTFB 和总耗时）。"""
+        msg_count = len(body["messages"])
+        logger.info(
+            f"LLM chat: stream=true msgs={msg_count} starting...",
+            extra={
+                "extra_fields": {
+                    "llm_model": body["model"],
+                    "llm_stream": True,
+                    "llm_msg_count": msg_count,
+                    "llm_status": "streaming",
+                },
+            },
+        )
+
+        start = time.time()
+        first_token = False
+        status_code = 0
+        error_type = None
+        chunk_count = 0
+        try:
             async with client.stream("POST", "/v1/chat/completions", json=body) as resp:
+                status_code = resp.status_code
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
                     if line.startswith("data: "):
@@ -75,9 +128,40 @@ class DeepSeekProvider(LLMProvider):
                         data = json.loads(data_str)
                         delta = data["choices"][0].get("delta", {})
                         if "content" in delta:
+                            if not first_token:
+                                first_token = True
+                                ttfb = round((time.time() - start) * 1000)
+                                logger.info(
+                                    f"LLM stream first_token ttfb={ttfb}ms",
+                                    extra={
+                                        "extra_fields": {
+                                            "llm_ttfb_ms": ttfb,
+                                            "llm_status": "streaming",
+                                        },
+                                    },
+                                )
+                            chunk_count += 1
                             yield delta["content"]
-
-        return generate()
+        except Exception as e:
+            error_type = type(e).__name__
+            raise
+        finally:
+            elapsed = round((time.time() - start) * 1000)
+            logger.info(
+                f"LLM stream done: chunks={chunk_count} total_elapsed={elapsed}ms"
+                + (f" error={error_type}" if error_type else ""),
+                extra={
+                    "extra_fields": {
+                        "llm_model": body["model"],
+                        "llm_stream": True,
+                        "llm_msg_count": msg_count,
+                        "llm_status": "error" if error_type else "ok",
+                        "llm_elapsed_ms": elapsed,
+                        "llm_chunks": chunk_count,
+                        "llm_error": error_type,
+                    },
+                },
+            )
 
     async def embed(self, text: str) -> list[float]:
         """DeepSeek doesn't have a dedicated embedding API yet.

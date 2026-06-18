@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timezone
 
 import httpx
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.meme import Meme
 from app.providers.llm import ChatMessage, LLMProvider
 from app.utils import extract_json_from_llm
+
+logger = logging.getLogger("ajiur.meme")
 
 
 class MemeService:
@@ -177,4 +180,8 @@ class MemeService:
             parsed = extract_json_from_llm(response)
             return parsed if isinstance(parsed, list) else []
         except Exception:
+            logger.warning(
+                "Meme scoring via LLM failed, returning unscored memes",
+                exc_info=True,
+            )
             return memes
